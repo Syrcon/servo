@@ -53,6 +53,12 @@ fn insert(parent: &Node, reference_child: Option<&Node>, child: NodeOrText<JS<No
     }
 }
 
+/// Local type replacing JS<Node>
+pub struct ParserNode {
+    id: usize,
+    Option<QualName>,
+}
+
 /// HashMap for storing new message types and corresponding JS<T> types
 let mut Hashtable:Arc<Mutex<HashMap<<T>, JS<Node>>>> = Arc::new(Mutex::new(HashMap::new()));
 
