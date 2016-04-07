@@ -16,6 +16,7 @@ use dom::event::{Event, EventBubbles, EventCancelable};
 use dom::htmlcanvaselement::HTMLCanvasElement;
 use dom::htmlcanvaselement::utils as canvas_utils;
 use dom::node::{Node, NodeDamage, window_from_node};
+use dom::webglactiveinfo::WebGLActiveInfo;
 use dom::webglbuffer::WebGLBuffer;
 use dom::webglcontextevent::WebGLContextEvent;
 use dom::webglframebuffer::WebGLFramebuffer;
@@ -795,6 +796,17 @@ impl WebGLRenderingContextMethods for WebGLRenderingContext {
     }
 
     // https://www.khronos.org/registry/webgl/specs/latest/1.0/#5.14.10
+    fn GetActiveUniform(&self, program: Option<&WebGLProgram>, index: u32) -> Option<Root<WebGLActiveInfo>> {
+        program.and_then(|p| match p.get_active_uniform(index) {
+            Ok(ret) => Some(ret),
+            Err(error) => {
+                self.webgl_error(error);
+                None
+            },
+        })
+    }
+
+    // https://www.khronos.org/registry/webgl/specs/latest/1.0/#5.14.10
     fn GetAttribLocation(&self, program: Option<&WebGLProgram>, name: DOMString) -> i32 {
         if let Some(program) = program {
             handle_potential_webgl_error!(self, program.get_attrib_location(name), None).unwrap_or(-1)
@@ -1009,6 +1021,27 @@ impl WebGLRenderingContextMethods for WebGLRenderingContext {
     }
 
     // https://www.khronos.org/registry/webgl/specs/latest/1.0/#5.14.10
+    fn Uniform1iv(&self,
+                  _cx: *mut JSContext,
+                  uniform: Option<&WebGLUniformLocation>,
+                  data: Option<*mut JSObject>) {
+        let data = match data {
+            Some(data) => data,
+            None => return self.webgl_error(InvalidValue),
+        };
+
+        if let Some(data) = array_buffer_view_to_vec_checked::<i32>(data) {
+            if data.len() < 1 {
+                return self.webgl_error(InvalidOperation);
+            }
+
+            self.Uniform1i(uniform, data[0]);
+        } else {
+            self.webgl_error(InvalidValue);
+        }
+    }
+
+    // https://www.khronos.org/registry/webgl/specs/latest/1.0/#5.14.10
     fn Uniform1fv(&self,
                   uniform: Option<&WebGLUniformLocation>,
                   data: Vec<f32>) {
@@ -1036,6 +1069,27 @@ impl WebGLRenderingContextMethods for WebGLRenderingContext {
         self.ipc_renderer
             .send(CanvasMsg::WebGL(WebGLCommand::Uniform2f(uniform.id(), x, y)))
             .unwrap()
+    }
+
+    // https://www.khronos.org/registry/webgl/specs/latest/1.0/#5.14.10
+    fn Uniform2fv(&self,
+                  _cx: *mut JSContext,
+                  uniform: Option<&WebGLUniformLocation>,
+                  data: Option<*mut JSObject>) {
+        let data = match data {
+            Some(data) => data,
+            None => return self.webgl_error(InvalidValue),
+        };
+
+        if let Some(data) = array_buffer_view_to_vec_checked::<f32>(data) {
+            if data.len() < 2 {
+                return self.webgl_error(InvalidOperation);
+            }
+
+            self.Uniform2f(uniform, data[0], data[1]);
+        } else {
+            self.webgl_error(InvalidValue);
+        }
     }
 
     // https://www.khronos.org/registry/webgl/specs/latest/1.0/#5.14.10

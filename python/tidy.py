@@ -39,6 +39,7 @@ ignored_files = [
     os.path.join(".", "resources", "hsts_preload.json"),
     os.path.join(".", "tests", "wpt", "metadata", "MANIFEST.json"),
     os.path.join(".", "tests", "wpt", "metadata-css", "MANIFEST.json"),
+    os.path.join(".", "components", "script", "dom", "webidls", "ForceTouchEvent.webidl"),
     # Hidden files
     os.path.join(".", "."),
 ]
@@ -55,6 +56,7 @@ ignored_dirs = [
     os.path.join(".", "tests", "wpt", "sync"),
     os.path.join(".", "tests", "wpt", "sync_css"),
     os.path.join(".", "python", "mach"),
+    os.path.join(".", "python", "tidy_self_test"),
     os.path.join(".", "components", "script", "dom", "bindings", "codegen", "parser"),
     os.path.join(".", "components", "script", "dom", "bindings", "codegen", "ply"),
     os.path.join(".", "python", "_virtualenv"),
@@ -66,6 +68,14 @@ ignored_dirs = [
     # Hidden directories
     os.path.join(".", "."),
 ]
+
+
+def is_iter_empty(iterator):
+    try:
+        obj = iterator.next()
+        return True, itertools.chain((obj,), iterator)
+    except StopIteration:
+        return False, iterator
 
 
 # A simple wrapper for iterators to show progress (note that it's inefficient for giant iterators)
@@ -90,6 +100,9 @@ def filter_file(file_name):
 
 def filter_files(start_dir, faster, progress):
     file_iter = get_file_list(start_dir, faster, ignored_dirs)
+    (has_element, file_iter) = is_iter_empty(file_iter)
+    if not has_element:
+        raise StopIteration
     if progress:
         file_iter = progress_wrapper(file_iter)
     for file_name in file_iter:
@@ -99,6 +112,7 @@ def filter_files(start_dir, faster, progress):
         if not filter_file(file_name):
             continue
         yield file_name
+
 
 EMACS_HEADER = "/* -*- Mode:"
 VIM_HEADER = "/* vim:"
@@ -207,7 +221,7 @@ def check_lock(file_name, contents):
         raise StopIteration
 
     # package names to be neglected (as named by cargo)
-    exceptions = ["bitflags", "xml-rs", "gl_generator"]
+    exceptions = ["bitflags", "xml-rs", "byteorder"]
 
     import toml
     content = toml.loads(contents)
@@ -554,7 +568,10 @@ def check_spec(file_name, lines):
 
 
 def collect_errors_for_files(files_to_check, checking_functions, line_checking_functions):
-    print 'Checking files for tidiness...'
+    (has_element, files_to_check) = is_iter_empty(files_to_check)
+    if not has_element:
+        raise StopIteration
+    print '\rChecking files for tidiness...'
     for filename in files_to_check:
         with open(filename, "r") as f:
             contents = f.read()
@@ -569,9 +586,12 @@ def collect_errors_for_files(files_to_check, checking_functions, line_checking_f
 
 
 def get_wpt_files(only_changed_files, progress):
-    print '\nRunning the WPT lint...'
     wpt_dir = os.path.join(".", "tests", "wpt", "web-platform-tests" + os.sep)
     file_iter = get_file_list(os.path.join(wpt_dir), only_changed_files)
+    (has_element, file_iter) = is_iter_empty(file_iter)
+    if not has_element:
+        raise StopIteration
+    print '\nRunning the WPT lint...'
     if progress:
         file_iter = progress_wrapper(file_iter)
     for f in file_iter:
@@ -618,12 +638,10 @@ def scan(faster=False, progress=True):
     checking_functions = (check_flake8, check_lock, check_webidl_spec, check_json)
     line_checking_functions = (check_license, check_by_line, check_toml, check_rust, check_spec)
     errors = collect_errors_for_files(files_to_check, checking_functions, line_checking_functions)
-
     # wpt lint checks
     wpt_lint_errors = check_wpt_lint_errors(get_wpt_files(faster, progress))
     # collect errors
     errors = itertools.chain(errors, wpt_lint_errors)
-
     error = None
     for error in errors:
         print "\r\033[94m{}\033[0m:\033[93m{}\033[0m: \033[91m{}\033[0m".format(*error)

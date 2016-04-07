@@ -359,7 +359,7 @@ impl CandidateBSizeIterator {
         };
 
         // If the style includes `box-sizing: border-box`, subtract the border and padding.
-        let adjustment_for_box_sizing = match fragment.style.get_box().box_sizing {
+        let adjustment_for_box_sizing = match fragment.style.get_position().box_sizing {
             box_sizing::T::border_box => fragment.border_padding.block_start_end(),
             box_sizing::T::content_box => Au(0),
         };
@@ -1308,7 +1308,7 @@ impl BlockFlow {
         let opaque_self = OpaqueFlow::from_flow(self);
 
         // Calculate non-auto block size to pass to children.
-        let box_border = match self.fragment.style().get_box().box_sizing {
+        let box_border = match self.fragment.style().get_position().box_sizing {
             box_sizing::T::border_box => self.fragment.border_padding.block_start_end(),
             box_sizing::T::content_box => Au(0),
         };
@@ -1563,10 +1563,6 @@ impl BlockFlow {
     }
 
     pub fn has_scrolling_overflow(&self) -> bool {
-        if !self.base.flags.contains(IS_ABSOLUTELY_POSITIONED) {
-            return false;
-        }
-
         match (self.fragment.style().get_box().overflow_x,
                self.fragment.style().get_box().overflow_y.0) {
             (overflow_x::T::auto, _) | (overflow_x::T::scroll, _) |
@@ -2189,7 +2185,7 @@ pub trait ISizeAndMarginsComputer {
                                                                          parent_flow_inline_size,
                                                                          layout_context);
         let style = block.fragment.style();
-        match (computed_inline_size, style.get_box().box_sizing) {
+        match (computed_inline_size, style.get_position().box_sizing) {
             (MaybeAuto::Specified(size), box_sizing::T::border_box) => {
                 computed_inline_size =
                     MaybeAuto::Specified(size - block.fragment.border_padding.inline_start_end())

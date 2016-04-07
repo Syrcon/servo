@@ -20,7 +20,7 @@ use layers::platform::surface::NativeDisplay;
 use msg::constellation_msg::{KeyState, NONE, CONTROL, SHIFT, ALT, SUPER};
 use msg::constellation_msg::{self, Key};
 use net_traits::net_error_list::NetError;
-use script_traits::TouchEventType;
+use script_traits::{TouchEventType, TouchpadPressurePhase};
 use std::cell::{Cell, RefCell};
 use std::os::raw::c_void;
 use std::rc::Rc;
@@ -220,7 +220,7 @@ impl Window {
                         self.handle_mouse(mouse_button, element_state, mouse_pos.x, mouse_pos.y);
                    }
             }
-            Event::MouseMoved((x, y)) => {
+            Event::MouseMoved(x, y) => {
                 self.mouse_pos.set(Point2D::new(x, y));
                 self.event_queue.borrow_mut().push(
                     WindowEvent::MouseWindowMoveEventClass(Point2D::typed(x as f32, y as f32)));
@@ -241,6 +241,12 @@ impl Window {
                 let point = Point2D::typed(touch.location.0 as f32, touch.location.1 as f32);
                 self.event_queue.borrow_mut().push(WindowEvent::Touch(phase, id, point));
             }
+            Event::TouchpadPressure(pressure, stage) => {
+                let m = self.mouse_pos.get();
+                let point = Point2D::typed(m.x as f32, m.y as f32);
+                let phase = glutin_pressure_stage_to_touchpad_pressure_phase(stage);
+                self.event_queue.borrow_mut().push(WindowEvent::TouchpadPressure(point, pressure, phase));
+            }
             Event::Refresh => {
                 self.event_queue.borrow_mut().push(WindowEvent::Refresh);
             }
@@ -260,7 +266,14 @@ impl Window {
     }
 
     /// Helper function to send a scroll event.
-    fn scroll_window(&self, dx: f32, dy: f32, phase: TouchEventType) {
+    fn scroll_window(&self, mut dx: f32, mut dy: f32, phase: TouchEventType) {
+        // Scroll events snap to the major axis of movement, with vertical
+        // preferred over horizontal.
+        if dy.abs() >= dx.abs() {
+            dx = 0.0;
+        } else {
+            dy = 0.0;
+        }
         let mouse_pos = self.mouse_pos.get();
         let event = WindowEvent::Scroll(Point2D::typed(dx as f32, dy as f32),
                                         Point2D::typed(mouse_pos.x as i32, mouse_pos.y as i32),
@@ -809,6 +822,16 @@ fn glutin_phase_to_touch_event_type(phase: TouchPhase) -> TouchEventType {
         TouchPhase::Moved => TouchEventType::Move,
         TouchPhase::Ended => TouchEventType::Up,
         TouchPhase::Cancelled => TouchEventType::Cancel,
+    }
+}
+
+fn glutin_pressure_stage_to_touchpad_pressure_phase(stage: i64) -> TouchpadPressurePhase {
+    if stage < 1 {
+        TouchpadPressurePhase::BeforeClick
+    } else if stage < 2 {
+        TouchpadPressurePhase::AfterFirstClick
+    } else {
+        TouchpadPressurePhase::AfterSecondClick
     }
 }
 

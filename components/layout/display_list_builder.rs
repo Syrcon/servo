@@ -566,7 +566,7 @@ impl FragmentDisplayListBuilding for Fragment {
                 webrender_image: webrender_image,
                 image_data: image_data.map(Arc::new),
                 stretch_size: Size2D::new(image_size.width, image_size.height),
-                image_rendering: style.get_effects().image_rendering.clone(),
+                image_rendering: style.get_inheritedbox().image_rendering.clone(),
             }), display_list_section);
         }
     }
@@ -1122,7 +1122,7 @@ impl FragmentDisplayListBuilding for Fragment {
                     self.style().get_color().color
                 };
 
-                for text_shadow in self.style.get_effects().text_shadow.0.iter().rev() {
+                for text_shadow in self.style.get_inheritedtext().text_shadow.0.iter().rev() {
                     let offset = &Point2D::new(text_shadow.offset_x, text_shadow.offset_y);
                     let color = self.style().resolve_color(text_shadow.color);
                     self.build_display_list_for_text_fragment(state,
@@ -1206,7 +1206,7 @@ impl FragmentDisplayListBuilding for Fragment {
                         webrender_image: WebRenderImageInfo::from_image(image),
                         image_data: Some(Arc::new(image.bytes.clone())),
                         stretch_size: stacking_relative_content_box.size,
-                        image_rendering: self.style.get_effects().image_rendering.clone(),
+                        image_rendering: self.style.get_inheritedbox().image_rendering.clone(),
                     }), DisplayListSection::Content);
                 }
             }
@@ -1470,33 +1470,22 @@ impl FragmentDisplayListBuilding for Fragment {
 
         // Clip according to the values of `overflow-x` and `overflow-y`.
         //
-        // TODO(pcwalton): Support scrolling of non-absolutely-positioned elements.
         // FIXME(pcwalton): This may be more complex than it needs to be, since it seems to be
         // impossible with the computed value rules as they are to have `overflow-x: visible` with
         // `overflow-y: <scrolling>` or vice versa!
-        match (self.style.get_box().overflow_x, is_absolutely_positioned) {
-            (overflow_x::T::hidden, _) |
-            (overflow_x::T::auto, false) |
-            (overflow_x::T::scroll, false) => {
-                let mut bounds = current_clip.bounding_rect();
-                let max_x = cmp::min(bounds.max_x(), overflow_clip_rect.max_x());
-                bounds.origin.x = cmp::max(bounds.origin.x, overflow_clip_rect.origin.x);
-                bounds.size.width = max_x - bounds.origin.x;
-                current_clip.intersect_rect(&bounds)
-            }
-            _ => {}
+        if let overflow_x::T::hidden = self.style.get_box().overflow_x {
+            let mut bounds = current_clip.bounding_rect();
+            let max_x = cmp::min(bounds.max_x(), overflow_clip_rect.max_x());
+            bounds.origin.x = cmp::max(bounds.origin.x, overflow_clip_rect.origin.x);
+            bounds.size.width = max_x - bounds.origin.x;
+            current_clip.intersect_rect(&bounds)
         }
-        match (self.style.get_box().overflow_y.0, is_absolutely_positioned) {
-            (overflow_x::T::hidden, _) |
-            (overflow_x::T::auto, false) |
-            (overflow_x::T::scroll, false) => {
-                let mut bounds = current_clip.bounding_rect();
-                let max_y = cmp::min(bounds.max_y(), overflow_clip_rect.max_y());
-                bounds.origin.y = cmp::max(bounds.origin.y, overflow_clip_rect.origin.y);
-                bounds.size.height = max_y - bounds.origin.y;
-                current_clip.intersect_rect(&bounds)
-            }
-            _ => {}
+        if let overflow_x::T::hidden = self.style.get_box().overflow_y.0 {
+            let mut bounds = current_clip.bounding_rect();
+            let max_y = cmp::min(bounds.max_y(), overflow_clip_rect.max_y());
+            bounds.origin.y = cmp::max(bounds.origin.y, overflow_clip_rect.origin.y);
+            bounds.size.height = max_y - bounds.origin.y;
+            current_clip.intersect_rect(&bounds)
         }
 
         let border_radii = build_border_radius(stacking_relative_border_box,
