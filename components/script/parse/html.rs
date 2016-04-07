@@ -53,6 +53,9 @@ fn insert(parent: &Node, reference_child: Option<&Node>, child: NodeOrText<JS<No
     }
 }
 
+/// HashMap for storing new message types and corresponding JS<T> types
+let mut Hashtable:Arc<Mutex<HashMap<<T>, JS<Node>>>> = Arc::new(Mutex::new(HashMap::new()));
+
 impl<'a> TreeSink for servohtmlparser::Sink {
     type Output = Self;
     fn finish(self) -> Self { self }
