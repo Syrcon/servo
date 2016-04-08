@@ -68,7 +68,7 @@ use net_traits::storage_thread::StorageThread;
 use net_traits::{AsyncResponseTarget, ControlMsg, LoadConsumer, LoadContext, Metadata, ResourceThread};
 use network_listener::NetworkListener;
 use page::{Frame, IterablePage, Page};
-use parse::html::{ParseContext, parse_html};
+use parse::html::{ParseContext, parse_html, process_parser_operation};
 use parse::xml::{self, parse_xml};
 use profile_traits::mem::{self, OpaqueSender, Report, ReportKind, ReportsChan};
 use profile_traits::time::{self, ProfilerCategory, profile};
@@ -220,6 +220,12 @@ pub enum MainThreadScriptMsg {
     Navigate(PipelineId, LoadData),
     /// Tasks that originate from the DOM manipulation task source
     DOMManipulation(DOMManipulationTask),
+    /// Parser operations for speculative parsing
+    ParserOperation(ParserOperationMsg),
+}
+
+pub enum ParserOperationMsg {
+    Append(Parent, Child, Hashtable),
 }
 
 impl OpaqueSender<CommonScriptMsg> for Box<ScriptChan + Send> {
@@ -923,6 +929,8 @@ impl ScriptThread {
                 self.collect_reports(reports_chan),
             MainThreadScriptMsg::DOMManipulation(msg) =>
                 msg.handle_msg(self),
+            MainThreadScriptMsg::ParserOperation(msg) =>
+                process_parser_operation
         }
     }
 

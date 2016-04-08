@@ -42,6 +42,7 @@ use url::Url;
 pub struct Sink {
     pub base_url: Option<Url>,
     pub document: JS<Document>,
+    pub next_parse_node_id: usize,
 }
 
 /// FragmentContext is used only to pass this group of related values
