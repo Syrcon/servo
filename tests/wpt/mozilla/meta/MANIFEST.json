@@ -2579,6 +2579,18 @@
             "url": "/_mozilla/css/input_height_a.html"
           }
         ],
+        "css/input_insertion_point_empty_a.html": [
+          {
+            "path": "css/input_insertion_point_empty_a.html",
+            "references": [
+              [
+                "/_mozilla/css/input_insertion_point_empty_ref.html",
+                "!="
+              ]
+            ],
+            "url": "/_mozilla/css/input_insertion_point_empty_a.html"
+          }
+        ],
         "css/input_placeholder.html": [
           {
             "path": "css/input_placeholder.html",
@@ -3297,6 +3309,18 @@
               ]
             ],
             "url": "/_mozilla/css/no_image_background_a.html"
+          }
+        ],
+        "css/non-inline-block-resets-underline-property.html": [
+          {
+            "path": "css/non-inline-block-resets-underline-property.html",
+            "references": [
+              [
+                "/_mozilla/css/non-inline-block-resets-underline-property-ref.html",
+                "=="
+              ]
+            ],
+            "url": "/_mozilla/css/non-inline-block-resets-underline-property.html"
           }
         ],
         "css/noscript.html": [
@@ -9049,6 +9073,18 @@
           "url": "/_mozilla/css/input_height_a.html"
         }
       ],
+      "css/input_insertion_point_empty_a.html": [
+        {
+          "path": "css/input_insertion_point_empty_a.html",
+          "references": [
+            [
+              "/_mozilla/css/input_insertion_point_empty_ref.html",
+              "!="
+            ]
+          ],
+          "url": "/_mozilla/css/input_insertion_point_empty_a.html"
+        }
+      ],
       "css/input_placeholder.html": [
         {
           "path": "css/input_placeholder.html",
@@ -9767,6 +9803,18 @@
             ]
           ],
           "url": "/_mozilla/css/no_image_background_a.html"
+        }
+      ],
+      "css/non-inline-block-resets-underline-property.html": [
+        {
+          "path": "css/non-inline-block-resets-underline-property.html",
+          "references": [
+            [
+              "/_mozilla/css/non-inline-block-resets-underline-property-ref.html",
+              "=="
+            ]
+          ],
+          "url": "/_mozilla/css/non-inline-block-resets-underline-property.html"
         }
       ],
       "css/noscript.html": [
