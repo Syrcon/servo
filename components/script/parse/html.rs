@@ -68,6 +68,11 @@ impl<'a> TreeSink for servohtmlparser::Sink {
 
     type Handle = JS<Node>;
 
+    fn generate_unique_id(&mut self) -> usize {
+        servohtmlparser::Sink::next_parse_node_id += 1;
+        servohtmlparser::Sink::next_parse_node_id
+    }
+
     fn get_document(&mut self) -> JS<Node> {
         JS::from_ref(self.document.upcast())
     }
