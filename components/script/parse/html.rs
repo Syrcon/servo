@@ -185,14 +185,14 @@ impl<'a> TreeSink for servohtmlparser::Sink {
 // message processing
 pub fn process_parser_operation(op: ParserOperation) {
     match op {
-        ParserOperation::Append(parent_hashtable, child_hashtable) {
-            let parent = match Hashtable.get(parent_hashtable) {
+        ParserOperation::Append(self_, parentParserNode, childParserNode, Hashtable) {
+            let parent = match Hashtable.get(parentParserNode) {
                 Some(corresponding_handle) => corresponding_handle,
-                None => println!("{} is not found?", parent_hashtable)
+                None => println!("{} is not found?", parentParserNode)
             }
-            let child = match Hashtable.get(child_hashtable) {
+            let child = match Hashtable.get(childParserNode) {
                 Some(corresponding_handle) => corresponding_handle,
-                None => println!("{} is not found?", child_hashtable)
+                None => println!("{} is not found?", childParserNode)
             }
             // FIXME(#3701): Use a simpler algorithm and merge adjacent text nodes
             insert(&parent, None, child);
