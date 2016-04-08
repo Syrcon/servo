@@ -130,8 +130,12 @@ impl<'a> TreeSink for servohtmlparser::Sink {
     }
 
     fn append(&mut self, parent: JS<Node>, child: NodeOrText<JS<Node>>) {
-        // FIXME(#3701): Use a simpler algorithm and merge adjacent text nodes
-        insert(&parent, None, child);
+        let mut parentParserNode<ParserNode> = ParserNode{ id: generate_unique_id(&mut self)};
+        let mut childParserNode<NodeOrText<<ParserNode>>> = NodeOrText<ParserNode{ id: generate_unique_id(&mut self)}>;
+        Hashtable.lock().unwrap().insert(parentParserNode, parent);
+        Hashtable.lock().unwrap().insert(childParserNode, child);
+        let self_ = &mut self;
+        self.sender.send(MainThreadScriptMsg::ParserOperation(ParserOperationMsg::Append(self_, parentParserNode, childParserNode, Hashtable)));
     }
 
     fn append_doctype_to_document(&mut self, name: StrTendril, public_id: StrTendril,
@@ -175,6 +179,24 @@ impl<'a> TreeSink for servohtmlparser::Sink {
             new_parent.AppendChild(child.r()).unwrap();
         }
 
+    }
+}
+
+// message processing
+pub fn process_parser_operation(op: ParserOperation) {
+    match op {
+        ParserOperation::Append(parent_hashtable, child_hashtable) {
+            let parent = match Hashtable.get(parent_hashtable) {
+                Some(corresponding_handle) => corresponding_handle,
+                None => println!("{} is not found?", parent_hashtable)
+            }
+            let child = match Hashtable.get(child_hashtable) {
+                Some(corresponding_handle) => corresponding_handle,
+                None => println!("{} is not found?", child_hashtable)
+            }
+            // FIXME(#3701): Use a simpler algorithm and merge adjacent text nodes
+            insert(&parent, None, child);
+        }
     }
 }
 
