@@ -2423,6 +2423,18 @@
             "url": "/_mozilla/css/inline_element_border_a.html"
           }
         ],
+        "css/inline_font_size_zero_a.html": [
+          {
+            "path": "css/inline_font_size_zero_a.html",
+            "references": [
+              [
+                "/_mozilla/css/inline_font_size_zero_ref.html",
+                "=="
+              ]
+            ],
+            "url": "/_mozilla/css/inline_font_size_zero_a.html"
+          }
+        ],
         "css/inline_hypothetical_box_a.html": [
           {
             "path": "css/inline_hypothetical_box_a.html",
@@ -3165,6 +3177,54 @@
               ]
             ],
             "url": "/_mozilla/css/marker_block_direction_placement_a.html"
+          }
+        ],
+        "css/max_inline_block_size.html": [
+          {
+            "path": "css/max_inline_block_size.html",
+            "references": [
+              [
+                "/_mozilla/css/max_inline_block_size_ref.html",
+                "=="
+              ]
+            ],
+            "url": "/_mozilla/css/max_inline_block_size.html"
+          }
+        ],
+        "css/max_inline_block_size_canvas.html": [
+          {
+            "path": "css/max_inline_block_size_canvas.html",
+            "references": [
+              [
+                "/_mozilla/css/max_inline_block_size_ref.html",
+                "=="
+              ]
+            ],
+            "url": "/_mozilla/css/max_inline_block_size_canvas.html"
+          }
+        ],
+        "css/max_inline_block_size_image.html": [
+          {
+            "path": "css/max_inline_block_size_image.html",
+            "references": [
+              [
+                "/_mozilla/css/max_inline_block_size_ref.html",
+                "=="
+              ]
+            ],
+            "url": "/_mozilla/css/max_inline_block_size_image.html"
+          }
+        ],
+        "css/max_inline_block_size_ref.html": [
+          {
+            "path": "css/max_inline_block_size_ref.html",
+            "references": [
+              [
+                "/_mozilla/css/max_inline_block_size_ref.html",
+                "=="
+              ]
+            ],
+            "url": "/_mozilla/css/max_inline_block_size_ref.html"
           }
         ],
         "css/max_width_float_simple_a.html": [
@@ -5031,6 +5091,30 @@
             "url": "/_mozilla/css/transition_calc.html"
           }
         ],
+        "css/translate_clip.html": [
+          {
+            "path": "css/translate_clip.html",
+            "references": [
+              [
+                "/_mozilla/css/translate_clip_ref.html",
+                "=="
+              ]
+            ],
+            "url": "/_mozilla/css/translate_clip.html"
+          }
+        ],
+        "css/translate_clip_nested.html": [
+          {
+            "path": "css/translate_clip_nested.html",
+            "references": [
+              [
+                "/_mozilla/css/translate_clip_nested_ref.html",
+                "=="
+              ]
+            ],
+            "url": "/_mozilla/css/translate_clip_nested.html"
+          }
+        ],
         "css/upper_id_attr.html": [
           {
             "path": "css/upper_id_attr.html",
@@ -5709,6 +5793,12 @@
         ]
       },
       "testharness": {
+        "css/flex-item-assign-inline-size.html": [
+          {
+            "path": "css/flex-item-assign-inline-size.html",
+            "url": "/_mozilla/css/flex-item-assign-inline-size.html"
+          }
+        ],
         "css/float_relative_to_position.html": [
           {
             "path": "css/float_relative_to_position.html",
@@ -6457,6 +6547,12 @@
           {
             "path": "mozilla/webgl/get_supported_extensions.html",
             "url": "/_mozilla/mozilla/webgl/get_supported_extensions.html"
+          }
+        ],
+        "mozilla/webgl/invalid_vertex_attributes.html": [
+          {
+            "path": "mozilla/webgl/invalid_vertex_attributes.html",
+            "url": "/_mozilla/mozilla/webgl/invalid_vertex_attributes.html"
           }
         ],
         "mozilla/websocket_connection_fail.html": [
@@ -8917,6 +9013,18 @@
           "url": "/_mozilla/css/inline_element_border_a.html"
         }
       ],
+      "css/inline_font_size_zero_a.html": [
+        {
+          "path": "css/inline_font_size_zero_a.html",
+          "references": [
+            [
+              "/_mozilla/css/inline_font_size_zero_ref.html",
+              "=="
+            ]
+          ],
+          "url": "/_mozilla/css/inline_font_size_zero_a.html"
+        }
+      ],
       "css/inline_hypothetical_box_a.html": [
         {
           "path": "css/inline_hypothetical_box_a.html",
@@ -9659,6 +9767,54 @@
             ]
           ],
           "url": "/_mozilla/css/marker_block_direction_placement_a.html"
+        }
+      ],
+      "css/max_inline_block_size.html": [
+        {
+          "path": "css/max_inline_block_size.html",
+          "references": [
+            [
+              "/_mozilla/css/max_inline_block_size_ref.html",
+              "=="
+            ]
+          ],
+          "url": "/_mozilla/css/max_inline_block_size.html"
+        }
+      ],
+      "css/max_inline_block_size_canvas.html": [
+        {
+          "path": "css/max_inline_block_size_canvas.html",
+          "references": [
+            [
+              "/_mozilla/css/max_inline_block_size_ref.html",
+              "=="
+            ]
+          ],
+          "url": "/_mozilla/css/max_inline_block_size_canvas.html"
+        }
+      ],
+      "css/max_inline_block_size_image.html": [
+        {
+          "path": "css/max_inline_block_size_image.html",
+          "references": [
+            [
+              "/_mozilla/css/max_inline_block_size_ref.html",
+              "=="
+            ]
+          ],
+          "url": "/_mozilla/css/max_inline_block_size_image.html"
+        }
+      ],
+      "css/max_inline_block_size_ref.html": [
+        {
+          "path": "css/max_inline_block_size_ref.html",
+          "references": [
+            [
+              "/_mozilla/css/max_inline_block_size_ref.html",
+              "=="
+            ]
+          ],
+          "url": "/_mozilla/css/max_inline_block_size_ref.html"
         }
       ],
       "css/max_width_float_simple_a.html": [
@@ -11523,6 +11679,30 @@
             ]
           ],
           "url": "/_mozilla/css/transition_calc.html"
+        }
+      ],
+      "css/translate_clip.html": [
+        {
+          "path": "css/translate_clip.html",
+          "references": [
+            [
+              "/_mozilla/css/translate_clip_ref.html",
+              "=="
+            ]
+          ],
+          "url": "/_mozilla/css/translate_clip.html"
+        }
+      ],
+      "css/translate_clip_nested.html": [
+        {
+          "path": "css/translate_clip_nested.html",
+          "references": [
+            [
+              "/_mozilla/css/translate_clip_nested_ref.html",
+              "=="
+            ]
+          ],
+          "url": "/_mozilla/css/translate_clip_nested.html"
         }
       ],
       "css/upper_id_attr.html": [

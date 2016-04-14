@@ -19,7 +19,7 @@ doc = false
 bench = false
 
 [dev-dependencies]
-image = "0.7"
+image = "0.9"
 
 [dev-dependencies.gfx_tests]
 path = "../../tests/unit/gfx"
@@ -32,9 +32,6 @@ path = "../../tests/unit/net"
 
 [dev-dependencies.net_traits_tests]
 path = "../../tests/unit/net_traits"
-
-[dev-dependencies.plugin_tests]
-path = "../../tests/unit/plugin"
 
 [dev-dependencies.script_tests]
 path = "../../tests/unit/script"

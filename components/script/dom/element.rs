@@ -377,7 +377,7 @@ impl LayoutElementHelpers for LayoutJS<Element> {
                 },
                 // Others
                 _ => {
-                    match this.get_size_for_layout() {
+                    match this.size_for_layout() {
                         0 => None,
                         s => Some(s as i32),
                     }
@@ -571,7 +571,7 @@ impl LayoutElementHelpers for LayoutJS<Element> {
         // TODO option and menuitem can also have a checked state.
         match self.downcast::<HTMLInputElement>() {
             Some(input) => unsafe {
-                input.get_checked_state_for_layout()
+                input.checked_state_for_layout()
             },
             None => false,
         }
@@ -583,7 +583,7 @@ impl LayoutElementHelpers for LayoutJS<Element> {
         // TODO progress elements can also be matched with :indeterminate
         match self.downcast::<HTMLInputElement>() {
             Some(input) => unsafe {
-                input.get_indeterminate_state_for_layout()
+                input.indeterminate_state_for_layout()
             },
             None => false,
         }
@@ -1489,7 +1489,7 @@ impl ElementMethods for Element {
     }
 
     /// https://w3c.github.io/DOM-Parsing/#widl-Element-innerHTML
-    fn SetInnerHTML(&self, value: DOMString) -> Fallible<()> {
+    fn SetInnerHTML(&self, value: DOMString) -> ErrorResult {
         let context_node = self.upcast::<Node>();
         // Step 1.
         let frag = try!(context_node.parse_fragment(value));
@@ -1510,7 +1510,7 @@ impl ElementMethods for Element {
     }
 
     // https://dvcs.w3.org/hg/innerhtml/raw-file/tip/index.html#widl-Element-outerHTML
-    fn SetOuterHTML(&self, value: DOMString) -> Fallible<()> {
+    fn SetOuterHTML(&self, value: DOMString) -> ErrorResult {
         let context_document = document_from_node(self);
         let context_node = self.upcast::<Node>();
         // Step 1.

@@ -9,6 +9,7 @@
 // can be escaped. In the above example, Vec<<&Foo> achieves the desired result of Vec<&Foo>.
 
 use std::ascii::AsciiExt;
+use std::boxed::Box as StdBox;
 use std::collections::HashSet;
 use std::fmt;
 use std::intrinsics;
@@ -16,7 +17,8 @@ use std::mem;
 use std::sync::Arc;
 
 use app_units::Au;
-use cssparser::{Parser, Color, RGBA, AtRuleParser, DeclarationParser, Delimiter,
+use cssparser::Color as CSSParserColor;
+use cssparser::{Parser, RGBA, AtRuleParser, DeclarationParser, Delimiter,
                 DeclarationListParser, parse_important, ToCss, TokenSerializationType};
 use error_reporting::ParseErrorReporter;
 use url::Url;
@@ -48,9 +50,11 @@ def to_camel_case(ident):
     return re.sub("_([a-z])", lambda m: m.group(1).upper(), ident.strip("_").capitalize())
 
 class Keyword(object):
-    def __init__(self, name, values, extra_gecko_values=None, extra_servo_values=None):
+    def __init__(self, name, values, gecko_constant_prefix=None,
+                 extra_gecko_values=None, extra_servo_values=None):
         self.name = name
         self.values = values
+        self.gecko_constant_prefix = gecko_constant_prefix or "NS_STYLE_" + self.name.upper().replace("-", "_")
         self.extra_gecko_values = extra_gecko_values or []
         self.extra_servo_values = extra_servo_values or []
     def gecko_values(self):
@@ -64,10 +68,13 @@ class Keyword(object):
             return self.servo_values()
         else:
             raise Exception("Bad product: " + product)
+    def gecko_constant(self, value):
+        return self.gecko_constant_prefix + "_" + value.upper().replace("-", "_")
 
 class Longhand(object):
     def __init__(self, name, derived_from=None, keyword=None,
-                 custom_cascade=False, experimental=False, internal=False):
+                 custom_cascade=False, experimental=False, internal=False,
+                 gecko_ffi_name=None):
         self.name = name
         self.keyword = keyword
         self.ident = to_rust_ident(name)
@@ -76,6 +83,7 @@ class Longhand(object):
         self.experimental = ("layout.%s.enabled" % name) if experimental else None
         self.custom_cascade = custom_cascade
         self.internal = internal
+        self.gecko_ffi_name = gecko_ffi_name or "m" + self.camel_case
         if derived_from is None:
             self.derived_from = None
         else:
@@ -143,6 +151,9 @@ def new_style_struct(name, is_inherited, gecko_name=None, additional_methods=Non
     THIS_STYLE_STRUCT = style_struct
     return ""
 
+def active_style_structs():
+    return filter(lambda s: s.additional_methods or s.longhands, STYLE_STRUCTS)
+
 def switch_to_style_struct(name):
     global THIS_STYLE_STRUCT
 
@@ -169,7 +180,8 @@ pub mod longhands {
     use values::specified;
 
     <%def name="raw_longhand(name, keyword=None, derived_from=None, products='gecko,servo',
-                             custom_cascade=False, experimental=False, internal=False)">
+                             custom_cascade=False, experimental=False, internal=False,
+                             gecko_ffi_name=None)">
     <%
         if not CONFIG['product'] in products:
             return ""
@@ -181,7 +193,8 @@ pub mod longhands {
                             keyword=keyword,
                             custom_cascade=custom_cascade,
                             experimental=experimental,
-                            internal=internal)
+                            internal=internal,
+                            gecko_ffi_name=gecko_ffi_name)
         property.style_struct = THIS_STYLE_STRUCT
         THIS_STYLE_STRUCT.longhands.append(property)
         LONGHANDS.append(property)
@@ -202,8 +215,9 @@ pub mod longhands {
             use properties::longhands;
             use properties::property_bit_field::PropertyBitField;
             use properties::{ComputedValues, ServoComputedValues, PropertyDeclaration};
-            use properties::style_struct_traits::T${THIS_STYLE_STRUCT.trait_name};
+            use properties::style_struct_traits::${THIS_STYLE_STRUCT.trait_name};
             use properties::style_structs;
+            use std::boxed::Box as StdBox;
             use std::collections::HashMap;
             use std::sync::Arc;
             use values::computed::{TContext, ToComputedValue};
@@ -217,7 +231,7 @@ pub mod longhands {
                                     context: &mut computed::Context<C>,
                                     seen: &mut PropertyBitField,
                                     cacheable: &mut bool,
-                                    error_reporter: &mut Box<ParseErrorReporter + Send>) {
+                                    error_reporter: &mut StdBox<ParseErrorReporter + Send>) {
                 let declared_value = match *declaration {
                     PropertyDeclaration::${property.camel_case}(ref declared_value) => {
                         declared_value
@@ -309,10 +323,12 @@ pub mod longhands {
     </%def>
 
     <%def name="longhand(name, derived_from=None, keyword=None, products='gecko,servo',
-                         custom_cascade=False, experimental=False, internal=False)">
+                         custom_cascade=False, experimental=False, internal=False,
+                         gecko_ffi_name=None)">
         <%self:raw_longhand name="${name}" derived_from="${derived_from}" keyword="${keyword}"
                 products="${products}" custom_cascade="${custom_cascade}"
-                experimental="${experimental}" internal="${internal}">
+                experimental="${experimental}" internal="${internal}"
+                gecko_ffi_name="${gecko_ffi_name}">
             ${caller.body()}
             % if derived_from is None:
                 pub fn parse_specified(context: &ParserContext, input: &mut Parser)
@@ -325,12 +341,15 @@ pub mod longhands {
 
     <%def name="single_keyword_computed(name, values, products='gecko,servo',
                                         extra_gecko_values=None, extra_servo_values=None,
-                                        custom_cascade=False, experimental=False, internal=False)">
+                                        custom_cascade=False, experimental=False, internal=False,
+                                        gecko_constant_prefix=None, gecko_ffi_name=None)">
         <%self:longhand name="${name}" keyword="${Keyword(name, values.split(),
-                                                          extra_gecko_values,
-                                                          extra_servo_values)}"
+                                                          gecko_constant_prefix=gecko_constant_prefix,
+                                                          extra_gecko_values=extra_gecko_values,
+                                                          extra_servo_values=extra_servo_values)}"
                         products="${products}" custom_cascade="${custom_cascade}"
-                        experimental="${experimental}" internal="${internal}">
+                        experimental="${experimental}" internal="${internal}",
+                        gecko_ffi_name="${gecko_ffi_name}">
             pub use self::computed_value::T as SpecifiedValue;
             ${caller.body()}
             pub mod computed_value {
@@ -350,12 +369,16 @@ pub mod longhands {
         </%self:longhand>
     </%def>
 
-    <%def name="single_keyword(name, values, products='gecko,servo', experimental=False, internal=False)">
+    <%def name="single_keyword(name, values, products='gecko,servo',
+                               experimental=False, internal=False,
+                               gecko_constant_prefix=None, gecko_ffi_name=None)">
         <%self:single_keyword_computed name="${name}"
                                        values="${values}"
                                        products="${products}"
                                        experimental="${experimental}"
-                                       internal="${internal}">
+                                       internal="${internal}",
+                                       gecko_constant_prefix="${gecko_constant_prefix}"
+                                       gecko_ffi_name="${gecko_ffi_name}">
             use values::computed::ComputedValueAsSpecified;
             impl ComputedValueAsSpecified for SpecifiedValue {}
         </%self:single_keyword_computed>
@@ -526,7 +549,7 @@ pub mod longhands {
                                            Method("transition_count", "usize")])}
 
     // TODO(SimonSapin): don't parse `inline-table`, since we don't support it
-    <%self:longhand name="display" custom_cascade="True">
+    <%self:longhand name="display" custom_cascade="${CONFIG['product'] == 'servo'}">
         <%
             values = """inline block inline-block
                 table inline-table table-row-group table-header-group table-footer-group
@@ -538,7 +561,6 @@ pub mod longhands {
         %>
         pub use self::computed_value::T as SpecifiedValue;
         use values::computed::{Context, ComputedValueAsSpecified};
-        use properties::style_struct_traits::TInheritedText;
 
         pub mod computed_value {
             #[allow(non_camel_case_types)]
@@ -584,21 +606,24 @@ pub mod longhands {
 
         impl ComputedValueAsSpecified for SpecifiedValue {}
 
-        fn cascade_property_custom<C: ComputedValues>(
-                                   _declaration: &PropertyDeclaration,
-                                   _inherited_style: &C,
-                                   context: &mut computed::Context<C>,
-                                   _seen: &mut PropertyBitField,
-                                   _cacheable: &mut bool,
-                                   _error_reporter: &mut Box<ParseErrorReporter + Send>) {
-            longhands::_servo_display_for_hypothetical_box::derive_from_display(context);
-            longhands::_servo_text_decorations_in_effect::derive_from_display(context);
-        }
+        % if CONFIG["product"] == "servo":
+            fn cascade_property_custom<C: ComputedValues>(
+                                       _declaration: &PropertyDeclaration,
+                                       _inherited_style: &C,
+                                       context: &mut computed::Context<C>,
+                                       _seen: &mut PropertyBitField,
+                                       _cacheable: &mut bool,
+                                       _error_reporter: &mut StdBox<ParseErrorReporter + Send>) {
+                longhands::_servo_display_for_hypothetical_box::derive_from_display(context);
+                longhands::_servo_text_decorations_in_effect::derive_from_display(context);
+            }
+        % endif
+
     </%self:longhand>
 
     ${single_keyword("position", "static absolute relative fixed")}
 
-    <%self:single_keyword_computed name="float" values="none left right">
+    <%self:single_keyword_computed name="float" values="none left right" gecko_ffi_name="mFloats">
         impl ToComputedValue for SpecifiedValue {
             type ComputedValue = computed_value::T;
 
@@ -617,9 +642,9 @@ pub mod longhands {
 
     </%self:single_keyword_computed>
 
-    ${single_keyword("clear", "none left right both")}
+    ${single_keyword("clear", "none left right both", gecko_ffi_name="mBreakType")}
 
-    <%self:longhand name="-servo-display-for-hypothetical-box" derived_from="display">
+    <%self:longhand name="-servo-display-for-hypothetical-box" derived_from="display" products="servo">
         pub use super::display::{SpecifiedValue, get_initial_value};
         pub use super::display::{parse};
 
@@ -683,7 +708,7 @@ pub mod longhands {
         }
     </%self:longhand>
 
-    ${new_style_struct("InheritedBox", is_inherited=True,
+    ${new_style_struct("InheritedBox", is_inherited=True, gecko_name="nsStyleVisibility",
                        additional_methods=[Method("clone_direction",
                                                   "longhands::direction::computed_value::T"),
                                            Method("clone_writing_mode",
@@ -722,8 +747,9 @@ pub mod longhands {
                       "parse_non_negative")}
 
     ${new_style_struct("InheritedText", is_inherited=True, gecko_name="nsStyleText",
-                       additional_methods=[Method("clone__servo_text_decorations_in_effect",
-                                                  "longhands::_servo_text_decorations_in_effect::computed_value::T")])}
+                       additional_methods=([Method("clone__servo_text_decorations_in_effect",
+                                                  "longhands::_servo_text_decorations_in_effect::computed_value::T")]
+                                           if CONFIG["product"] == "servo" else []))}
 
     <%self:longhand name="line-height">
         use cssparser::ToCss;
@@ -907,10 +933,14 @@ pub mod longhands {
     // CSS 2.1, Section 11 - Visual effects
 
     // Non-standard, see https://developer.mozilla.org/en-US/docs/Web/CSS/overflow-clip-box#Specifications
-    ${single_keyword("-servo-overflow-clip-box", "padding-box content-box", internal=True)}
+    ${single_keyword("-servo-overflow-clip-box", "padding-box content-box", products="servo",
+                     internal=True)}
+
+    ${single_keyword("overflow-clip-box", "padding-box content-box", products="gecko",
+                     internal=True)}
 
     // FIXME(pcwalton, #2742): Implement scrolling for `scroll` and `auto`.
-    ${single_keyword("overflow-x", "visible hidden scroll auto")}
+    ${single_keyword("overflow-x", "visible hidden scroll auto", gecko_constant_prefix="NS_STYLE_OVERFLOW")}
 
     // FIXME(pcwalton, #2742): Implement scrolling for `scroll` and `auto`.
     <%self:longhand name="overflow-y">
@@ -950,14 +980,30 @@ pub mod longhands {
         }
     </%self:longhand>
 
+    // CSSOM View Module
+    // https://www.w3.org/TR/cssom-view-1/
+    ${single_keyword("scroll-behavior", "auto smooth", products="gecko")}
+
+    // Non-standard: https://developer.mozilla.org/en-US/docs/Web/CSS/scroll-snap-type-x
+    ${single_keyword("scroll-snap-type-x", "none mandatory proximity",
+                     products="gecko", gecko_constant_prefix="NS_STYLE_SCROLL_SNAP_TYPE")}
+
+    // Non-standard: https://developer.mozilla.org/en-US/docs/Web/CSS/scroll-snap-type-y
+    ${single_keyword("scroll-snap-type-y", "none mandatory proximity",
+                     products="gecko", gecko_constant_prefix="NS_STYLE_SCROLL_SNAP_TYPE")}
+
+    // Compositing and Blending Level 1
+    // http://www.w3.org/TR/compositing-1/
+    ${single_keyword("isolation", "auto isolate", products="gecko")}
+
     ${switch_to_style_struct("InheritedBox")}
 
     // TODO: collapse. Well, do tables first.
-    ${single_keyword("visibility", "visible hidden")}
+    ${single_keyword("visibility", "visible hidden", gecko_ffi_name="mVisible")}
 
     // CSS 2.1, Section 12 - Generated content, automatic numbering, and lists
 
-    ${new_style_struct("Counters", is_inherited=False)}
+    ${new_style_struct("Counters", is_inherited=False, gecko_name="nsStyleContent")}
 
     <%self:longhand name="content">
         use cssparser::Token;
@@ -1352,6 +1398,13 @@ pub mod longhands {
 
     // CSS 2.1, Section 13 - Paged media
 
+    ${switch_to_style_struct("Box")}
+
+    ${single_keyword("page-break-after", "auto always avoid left right", products="gecko")}
+    ${single_keyword("page-break-before", "auto always avoid left right", products="gecko")}
+    ${single_keyword("page-break-inside", "auto avoid",
+                     products="gecko", gecko_ffi_name="mBreakInside", gecko_constant_prefix="NS_STYLE_PAGE_BREAK")}
+
     // CSS 2.1, Section 14 - Colors and Backgrounds
 
     ${new_style_struct("Background", is_inherited=False, gecko_name="nsStyleBackground")}
@@ -1681,7 +1734,8 @@ pub mod longhands {
                                                   "longhands::color::computed_value::T")])}
 
     <%self:raw_longhand name="color">
-        use cssparser::{Color, RGBA};
+        use cssparser::Color as CSSParserColor;
+        use cssparser::RGBA;
         use values::specified::{CSSColor, CSSRGBA};
 
         impl ToComputedValue for SpecifiedValue {
@@ -1705,8 +1759,8 @@ pub mod longhands {
                                -> Result<DeclaredValue<SpecifiedValue>, ()> {
             let value = try!(CSSColor::parse(input));
             let rgba = match value.parsed {
-                Color::RGBA(rgba) => rgba,
-                Color::CurrentColor => return Ok(DeclaredValue::Inherit)
+                CSSParserColor::RGBA(rgba) => rgba,
+                CSSParserColor::CurrentColor => return Ok(DeclaredValue::Inherit)
             };
             Ok(DeclaredValue::Value(CSSRGBA {
                 parsed: rgba,
@@ -2024,6 +2078,8 @@ pub mod longhands {
                      "normal ultra-condensed extra-condensed condensed semi-condensed semi-expanded \
                      expanded extra-expanded ultra-expanded")}
 
+    ${single_keyword("font-kerning", "auto none normal", products="gecko")}
+
     // CSS 2.1, Section 16 - Text
 
     ${switch_to_style_struct("InheritedText")}
@@ -2208,13 +2264,14 @@ pub mod longhands {
 
     // Also known as "word-wrap" (which is more popular because of IE), but this is the preferred
     // name per CSS-TEXT 6.2.
-    ${single_keyword("overflow-wrap", "normal break-word")}
+    ${single_keyword("overflow-wrap", "normal break-word", gecko_ffi_name="mWordWrap",
+                                                           gecko_constant_prefix="NS_STYLE_WORDWRAP")}
 
     // TODO(pcwalton): Support `word-break: keep-all` once we have better CJK support.
-    ${single_keyword("word-break", "normal break-all")}
+    ${single_keyword("word-break", "normal break-all", gecko_constant_prefix="NS_STYLE_WORDBREAK")}
 
     // TODO(pcwalton): Support `text-justify: distribute`.
-    ${single_keyword("text-justify", "auto none inter-word")}
+    ${single_keyword("text-justify", "auto none inter-word", products="servo")}
 
     ${new_style_struct("Text", is_inherited=False, gecko_name="nsStyleTextReset",
                        additional_methods=[Method("has_underline", "bool"),
@@ -2225,11 +2282,10 @@ pub mod longhands {
 
     ${single_keyword("unicode-bidi", "normal embed isolate bidi-override isolate-override plaintext")}
 
-    <%self:longhand name="text-decoration" custom_cascade="True">
+    <%self:longhand name="text-decoration" custom_cascade="${CONFIG['product'] == 'servo'}">
         use cssparser::ToCss;
         use std::fmt;
         use values::computed::ComputedValueAsSpecified;
-        use properties::style_struct_traits::TInheritedText;
 
         impl ComputedValueAsSpecified for SpecifiedValue {}
 
@@ -2301,26 +2357,31 @@ pub mod longhands {
             if !empty { Ok(result) } else { Err(()) }
         }
 
-        fn cascade_property_custom<C: ComputedValues>(
-                                   _declaration: &PropertyDeclaration,
-                                   _inherited_style: &C,
-                                   context: &mut computed::Context<C>,
-                                   _seen: &mut PropertyBitField,
-                                   _cacheable: &mut bool,
-                                   _error_reporter: &mut Box<ParseErrorReporter + Send>) {
-            longhands::_servo_text_decorations_in_effect::derive_from_text_decoration(context);
-        }
+        % if CONFIG["product"] == "servo":
+            fn cascade_property_custom<C: ComputedValues>(
+                                       _declaration: &PropertyDeclaration,
+                                       _inherited_style: &C,
+                                       context: &mut computed::Context<C>,
+                                       _seen: &mut PropertyBitField,
+                                       _cacheable: &mut bool,
+                                       _error_reporter: &mut StdBox<ParseErrorReporter + Send>) {
+                    longhands::_servo_text_decorations_in_effect::derive_from_text_decoration(context);
+            }
+        % endif
     </%self:longhand>
+
+    ${single_keyword("text-decoration-style", "-moz-none solid double dotted dashed wavy",
+                     products="gecko")}
 
     ${switch_to_style_struct("InheritedText")}
 
     <%self:longhand name="-servo-text-decorations-in-effect"
-                    derived_from="display text-decoration">
+                    derived_from="display text-decoration" products="servo">
         use cssparser::{RGBA, ToCss};
         use std::fmt;
 
         use values::computed::ComputedValueAsSpecified;
-        use properties::style_struct_traits::{TBox, TColor, TText};
+        use properties::style_struct_traits::{Box, Color, Text};
 
         impl ComputedValueAsSpecified for SpecifiedValue {}
 
@@ -2395,7 +2456,8 @@ pub mod longhands {
         }
     </%self:longhand>
 
-    <%self:single_keyword_computed name="white-space" values="normal pre nowrap pre-wrap pre-line">
+    <%self:single_keyword_computed name="white-space" values="normal pre nowrap pre-wrap pre-line",
+                                   gecko_constant_prefix="NS_STYLE_WHITESPACE">
         use values::computed::ComputedValueAsSpecified;
         impl ComputedValueAsSpecified for SpecifiedValue {}
 
@@ -2437,16 +2499,26 @@ pub mod longhands {
 
     ${single_keyword("text-rendering", "auto optimizespeed optimizelegibility geometricprecision")}
 
+    // CSS Text Module Level 3
+    // https://www.w3.org/TR/css-text-3/
+    ${single_keyword("hyphens", "none manual auto", products="gecko")}
+
+    // CSS Ruby Layout Module Level 1
+    // https://www.w3.org/TR/css-ruby-1/
+    ${single_keyword("ruby-align", "start center space-between space-around", products="gecko")}
+
+    ${single_keyword("ruby-position", "over under", products="gecko")}
+
     // CSS 2.1, Section 17 - Tables
     ${new_style_struct("Table", is_inherited=False, gecko_name="nsStyleTable")}
 
-    ${single_keyword("table-layout", "auto fixed")}
+    ${single_keyword("table-layout", "auto fixed", gecko_ffi_name="mLayoutStrategy")}
 
-    ${new_style_struct("InheritedTable", is_inherited=True)}
+    ${new_style_struct("InheritedTable", is_inherited=True, gecko_name="nsStyleTableBorder")}
 
-    ${single_keyword("border-collapse", "separate collapse")}
+    ${single_keyword("border-collapse", "separate collapse", gecko_constant_prefix="NS_STYLE_BORDER")}
 
-    ${single_keyword("empty-cells", "show hide")}
+    ${single_keyword("empty-cells", "show hide", gecko_constant_prefix="NS_STYLE_TABLE_EMPTY_CELLS")}
 
     ${single_keyword("caption-side", "top bottom")}
 
@@ -2539,8 +2611,11 @@ pub mod longhands {
         }
     </%self:longhand>
 
-    // CSS 2.1, Section 18 - User interface
+    // CSS Fragmentation Module Level 3
+    // https://www.w3.org/TR/css-break-3/
+    ${switch_to_style_struct("Border")}
 
+    ${single_keyword("box-decoration-break", "slice clone", products="gecko")}
 
     // CSS Writing Modes Level 3
     // http://dev.w3.org/csswg/css-writing-modes/
@@ -2552,13 +2627,21 @@ pub mod longhands {
     // FIXME(SimonSapin): initial (first) value should be 'mixed', when that's implemented
     ${single_keyword("text-orientation", "sideways sideways-left sideways-right", experimental=True)}
 
+    // CSS Color Module Level 4
+    // https://drafts.csswg.org/css-color/
+    ${single_keyword("color-adjust", "economy exact", products="gecko")}
+
     // CSS Basic User Interface Module Level 3
     // http://dev.w3.org/csswg/css-ui/
+    ${switch_to_style_struct("Box")}
+
+    ${single_keyword("resize", "none both horizontal vertical", products="gecko")}
+
     ${switch_to_style_struct("Position")}
 
     ${single_keyword("box-sizing", "content-box border-box")}
 
-    ${new_style_struct("Pointing", is_inherited=True)}
+    ${new_style_struct("Pointing", is_inherited=True, gecko_name="nsStyleUserInterface")}
 
     <%self:longhand name="cursor">
         pub use self::computed_value::T as SpecifiedValue;
@@ -2802,7 +2885,7 @@ pub mod longhands {
     </%self:longhand>
 
     // Box-shadow, etc.
-    ${new_style_struct("Effects", is_inherited=False)}
+    ${new_style_struct("Effects", is_inherited=False, gecko_name="nsStyleEffects")}
 
     <%self:longhand name="opacity">
         use cssparser::ToCss;
@@ -4160,6 +4243,8 @@ pub mod longhands {
 
     ${single_keyword("backface-visibility", "visible hidden")}
 
+    ${single_keyword("transform-box", "border-box fill-box view-box", products="gecko")}
+
     ${single_keyword("transform-style", "auto flat preserve-3d")}
 
     <%self:longhand name="transform-origin">
@@ -4317,7 +4402,14 @@ pub mod longhands {
     ${single_keyword("mix-blend-mode",
                      """normal multiply screen overlay darken lighten color-dodge
                         color-burn hard-light soft-light difference exclusion hue
-                        saturation color luminosity""")}
+                        saturation color luminosity""", gecko_constant_prefix="NS_STYLE_BLEND")}
+
+    // CSS Image Values and Replaced Content Module Level 3
+    // https://drafts.csswg.org/css-images-3/
+
+    ${switch_to_style_struct("Position")}
+
+    ${single_keyword("object-fit", "fill contain cover none scale-down", products="gecko")}
 
     ${switch_to_style_struct("InheritedBox")}
 
@@ -4906,6 +4998,70 @@ pub mod longhands {
 
     // Flex container properties
     ${single_keyword("flex-direction", "row row-reverse column column-reverse", experimental=True)}
+
+    // https://drafts.csswg.org/css-flexbox/#propdef-order
+    <%self:longhand name="order">
+        use values::computed::ComputedValueAsSpecified;
+
+        impl ComputedValueAsSpecified for SpecifiedValue {}
+
+        pub type SpecifiedValue = computed_value::T;
+
+        pub mod computed_value {
+            pub type T = i32;
+        }
+
+        #[inline]
+        pub fn get_initial_value() -> computed_value::T {
+            0
+        }
+
+        fn parse(_context: &ParserContext, input: &mut Parser) -> Result<SpecifiedValue, ()> {
+            specified::parse_integer(input)
+        }
+    </%self:longhand>
+
+    ${single_keyword("flex-wrap", "nowrap wrap wrap-reverse", products="gecko")}
+
+    // SVG 1.1 (Second Edition)
+    // https://www.w3.org/TR/SVG/
+    ${new_style_struct("SVGInherited", is_inherited=True, gecko_name="nsStyleSVG")}
+
+    // Section 10 - Text
+
+    ${single_keyword("text-anchor", "start middle end", products="gecko")}
+
+    // Section 11 - Painting: Filling, Stroking and Marker Symbols
+    ${single_keyword("color-interpolation", "auto sRGB linearRGB", products="gecko")}
+
+    ${single_keyword("color-interpolation-filters", "auto sRGB linearRGB",
+                     products="gecko", gecko_constant_prefix="NS_STYLE_COLOR_INTERPOLATION")}
+
+    ${single_keyword("fill-rule", "nonzero evenodd", products="gecko")}
+
+    ${single_keyword("shape-rendering", "auto optimizeSpeed crispEdges geometricPrecision",
+                     products="gecko")}
+
+    ${single_keyword("stroke-linecap", "butt round square", products="gecko")}
+
+    ${single_keyword("stroke-linejoin", "miter round bevel", products="gecko")}
+
+    // Section 14 - Clipping, Masking and Compositing
+    ${single_keyword("clip-rule", "nonzero evenodd",
+                     products="gecko", gecko_constant_prefix="NS_STYLE_FILL_RULE")}
+
+    ${new_style_struct("SVG", is_inherited=False, gecko_name="nsStyleSVGReset")}
+
+    ${single_keyword("dominant-baseline",
+                     """auto use-script no-change reset-size ideographic alphabetic hanging
+                        mathematical central middle text-after-edge text-before-edge""",
+                     products="gecko")}
+
+    ${single_keyword("vector-effect", "none non-scaling-stroke", products="gecko")}
+
+    // CSS Masking Module Level 1
+    // https://www.w3.org/TR/css-masking-1/
+    ${single_keyword("mask-type", "luminance alpha", products="gecko")}
 }
 
 
@@ -5670,7 +5826,7 @@ mod property_bit_field {
             value: &DeclaredValue<longhands::${property.ident}::SpecifiedValue>,
             custom_properties: &Option<Arc<::custom_properties::ComputedValuesMap>>,
             f: F,
-            error_reporter: &mut Box<ParseErrorReporter + Send>)
+            error_reporter: &mut StdBox<ParseErrorReporter + Send>)
             where F: FnOnce(&DeclaredValue<longhands::${property.ident}::SpecifiedValue>)
         {
             if let DeclaredValue::WithVariables {
@@ -5697,7 +5853,7 @@ mod property_bit_field {
                 from_shorthand: Option<Shorthand>,
                 custom_properties: &Option<Arc<::custom_properties::ComputedValuesMap>>,
                 f: F,
-                error_reporter: &mut Box<ParseErrorReporter + Send>)
+                error_reporter: &mut StdBox<ParseErrorReporter + Send>)
                 where F: FnOnce(&DeclaredValue<longhands::${property.ident}::SpecifiedValue>) {
             f(&
                 ::custom_properties::substitute(css, first_token_type, custom_properties)
@@ -5747,13 +5903,13 @@ pub struct PropertyDeclarationBlock {
     pub normal: Arc<Vec<PropertyDeclaration>>,
 }
 
-pub fn parse_style_attribute(input: &str, base_url: &Url, error_reporter: Box<ParseErrorReporter + Send>)
+pub fn parse_style_attribute(input: &str, base_url: &Url, error_reporter: StdBox<ParseErrorReporter + Send>)
                              -> PropertyDeclarationBlock {
     let context = ParserContext::new(Origin::Author, base_url, error_reporter);
     parse_property_declaration_list(&context, &mut Parser::new(input))
 }
 
-pub fn parse_one_declaration(name: &str, input: &str, base_url: &Url, error_reporter: Box<ParseErrorReporter + Send>)
+pub fn parse_one_declaration(name: &str, input: &str, base_url: &Url, error_reporter: StdBox<ParseErrorReporter + Send>)
                              -> Result<Vec<PropertyDeclaration>, ()> {
     let context = ParserContext::new(Origin::Author, base_url, error_reporter);
     let mut results = vec![];
@@ -5993,29 +6149,30 @@ impl PropertyDeclaration {
     pub fn name(&self) -> PropertyDeclarationName {
         match *self {
             % for property in LONGHANDS:
+                PropertyDeclaration::${property.camel_case}(..) =>
                 % if property.derived_from is None:
-                    PropertyDeclaration::${property.camel_case}(..) => {
-                        PropertyDeclarationName::Longhand("${property.name}")
-                    }
+                    PropertyDeclarationName::Longhand("${property.name}"),
+                % else:
+                    PropertyDeclarationName::Internal,
                 % endif
             % endfor
             PropertyDeclaration::Custom(ref name, _) => {
                 PropertyDeclarationName::Custom(name.clone())
             }
-            _ => PropertyDeclarationName::Internal,
         }
     }
 
     pub fn value(&self) -> String {
         match *self {
             % for property in LONGHANDS:
+                PropertyDeclaration::${property.camel_case}
                 % if property.derived_from is None:
-                    PropertyDeclaration::${property.camel_case}(ref value) =>
-                        value.to_css_string(),
+                    (ref value) => value.to_css_string(),
+                % else:
+                    (_) => panic!("unsupported property declaration: ${property.name}"),
                 % endif
             % endfor
             PropertyDeclaration::Custom(_, ref value) => value.to_css_string(),
-            ref decl => panic!("unsupported property declaration: {}", decl.name()),
         }
     }
 
@@ -6057,16 +6214,16 @@ impl PropertyDeclaration {
     pub fn matches(&self, name: &str) -> bool {
         match *self {
             % for property in LONGHANDS:
+                PropertyDeclaration::${property.camel_case}(..) =>
                 % if property.derived_from is None:
-                    PropertyDeclaration::${property.camel_case}(..) => {
-                        name.eq_ignore_ascii_case("${property.name}")
-                    }
+                    name.eq_ignore_ascii_case("${property.name}"),
+                % else:
+                    false,
                 % endif
             % endfor
             PropertyDeclaration::Custom(ref declaration_name, _) => {
                 ::custom_properties::parse_name(name) == Ok(&**declaration_name)
             }
-            _ => false,
         }
     }
 
@@ -6166,8 +6323,8 @@ impl PropertyDeclaration {
 pub mod style_struct_traits {
     use super::longhands;
 
-    % for style_struct in STYLE_STRUCTS:
-        pub trait T${style_struct.trait_name}: Clone {
+    % for style_struct in active_style_structs():
+        pub trait ${style_struct.trait_name}: Clone {
             % for longhand in style_struct.longhands:
                 #[allow(non_snake_case)]
                 fn set_${longhand.ident}(&mut self, v: longhands::${longhand.ident}::computed_value::T);
@@ -6187,7 +6344,7 @@ pub mod style_structs {
     use super::longhands;
     use std::hash::{Hash, Hasher};
 
-    % for style_struct in STYLE_STRUCTS:
+    % for style_struct in active_style_structs():
         % if style_struct.trait_name == "Font":
         #[derive(Clone, HeapSizeOf, Debug)]
         % else:
@@ -6213,7 +6370,7 @@ pub mod style_structs {
         }
         % endif
 
-        impl super::style_struct_traits::T${style_struct.trait_name} for ${style_struct.servo_struct_name} {
+        impl super::style_struct_traits::${style_struct.trait_name} for ${style_struct.servo_struct_name} {
             % for longhand in style_struct.longhands:
                 fn set_${longhand.ident}(&mut self, v: longhands::${longhand.ident}::computed_value::T) {
                     self.${longhand.ident} = v;
@@ -6277,7 +6434,7 @@ pub mod style_structs {
                 fn clone_text_orientation(&self) -> longhands::text_orientation::computed_value::T {
                     self.text_orientation.clone()
                 }
-            % elif style_struct.trait_name == "InheritedText":
+            % elif style_struct.trait_name == "InheritedText" and CONFIG["product"] == "servo":
                 fn clone__servo_text_decorations_in_effect(&self) ->
                     longhands::_servo_text_decorations_in_effect::computed_value::T {
                     self._servo_text_decorations_in_effect.clone()
@@ -6303,8 +6460,8 @@ pub mod style_structs {
 }
 
 pub trait ComputedValues : Clone + Send + Sync + 'static {
-    % for style_struct in STYLE_STRUCTS:
-        type Concrete${style_struct.trait_name}: style_struct_traits::T${style_struct.trait_name};
+    % for style_struct in active_style_structs():
+        type Concrete${style_struct.trait_name}: style_struct_traits::${style_struct.trait_name};
     % endfor
 
         // Temporary bailout case for stuff we haven't made work with the trait
@@ -6318,7 +6475,7 @@ pub trait ComputedValues : Clone + Send + Sync + 'static {
                shareable: bool,
                writing_mode: WritingMode,
                root_font_size: Au,
-        % for style_struct in STYLE_STRUCTS:
+        % for style_struct in active_style_structs():
                ${style_struct.ident}: Arc<Self::Concrete${style_struct.trait_name}>,
         % endfor
         ) -> Self;
@@ -6327,7 +6484,7 @@ pub trait ComputedValues : Clone + Send + Sync + 'static {
 
         fn do_cascade_property<F: FnOnce(&Vec<Option<CascadePropertyFn<Self>>>)>(f: F);
 
-    % for style_struct in STYLE_STRUCTS:
+    % for style_struct in active_style_structs():
         fn clone_${style_struct.trait_name_lower}(&self) ->
             Arc<Self::Concrete${style_struct.trait_name}>;
         fn get_${style_struct.trait_name_lower}<'a>(&'a self) ->
@@ -6345,7 +6502,7 @@ pub trait ComputedValues : Clone + Send + Sync + 'static {
 
 #[derive(Clone, HeapSizeOf)]
 pub struct ServoComputedValues {
-    % for style_struct in STYLE_STRUCTS:
+    % for style_struct in active_style_structs():
         ${style_struct.ident}: Arc<style_structs::${style_struct.servo_struct_name}>,
     % endfor
     custom_properties: Option<Arc<::custom_properties::ComputedValuesMap>>,
@@ -6355,7 +6512,7 @@ pub struct ServoComputedValues {
 }
 
 impl ComputedValues for ServoComputedValues {
-    % for style_struct in STYLE_STRUCTS:
+    % for style_struct in active_style_structs():
         type Concrete${style_struct.trait_name} = style_structs::${style_struct.servo_struct_name};
     % endfor
 
@@ -6366,7 +6523,7 @@ impl ComputedValues for ServoComputedValues {
                shareable: bool,
                writing_mode: WritingMode,
                root_font_size: Au,
-            % for style_struct in STYLE_STRUCTS:
+            % for style_struct in active_style_structs():
                ${style_struct.ident}: Arc<style_structs::${style_struct.servo_struct_name}>,
             % endfor
         ) -> Self {
@@ -6375,7 +6532,7 @@ impl ComputedValues for ServoComputedValues {
                 shareable: shareable,
                 writing_mode: writing_mode,
                 root_font_size: root_font_size,
-            % for style_struct in STYLE_STRUCTS:
+            % for style_struct in active_style_structs():
                 ${style_struct.ident}: ${style_struct.ident},
             % endfor
             }
@@ -6387,7 +6544,7 @@ impl ComputedValues for ServoComputedValues {
             CASCADE_PROPERTY.with(|x| f(x));
         }
 
-    % for style_struct in STYLE_STRUCTS:
+    % for style_struct in active_style_structs():
         #[inline]
         fn clone_${style_struct.trait_name_lower}(&self) ->
             Arc<Self::Concrete${style_struct.trait_name}> {
@@ -6430,10 +6587,10 @@ impl ServoComputedValues {
     /// Usage example:
     /// let top_color = style.resolve_color(style.Border.border_top_color);
     #[inline]
-    pub fn resolve_color(&self, color: Color) -> RGBA {
+    pub fn resolve_color(&self, color: CSSParserColor) -> RGBA {
         match color {
-            Color::RGBA(rgba) => rgba,
-            Color::CurrentColor => self.get_color().color,
+            CSSParserColor::RGBA(rgba) => rgba,
+            CSSParserColor::CurrentColor => self.get_color().color,
         }
     }
 
@@ -6589,7 +6746,7 @@ impl ServoComputedValues {
 
     pub fn computed_value_to_string(&self, name: &str) -> Result<String, ()> {
         match name {
-            % for style_struct in STYLE_STRUCTS:
+            % for style_struct in active_style_structs():
                 % for longhand in style_struct.longhands:
                 "${longhand.name}" => Ok(self.${style_struct.ident}.${longhand.ident}.to_css_string()),
                 % endfor
@@ -6606,7 +6763,7 @@ impl ServoComputedValues {
 
 
 /// Return a WritingMode bitflags from the relevant CSS properties.
-pub fn get_writing_mode<S: style_struct_traits::TInheritedBox>(inheritedbox_style: &S) -> WritingMode {
+pub fn get_writing_mode<S: style_struct_traits::InheritedBox>(inheritedbox_style: &S) -> WritingMode {
     use logical_geometry;
     let mut flags = WritingMode::empty();
     match inheritedbox_style.clone_direction() {
@@ -6643,7 +6800,7 @@ pub fn get_writing_mode<S: style_struct_traits::TInheritedBox>(inheritedbox_styl
 /// The initial values for all style structs as defined by the specification.
 lazy_static! {
     pub static ref INITIAL_SERVO_VALUES: ServoComputedValues = ServoComputedValues {
-        % for style_struct in STYLE_STRUCTS:
+        % for style_struct in active_style_structs():
             ${style_struct.ident}: Arc::new(style_structs::${style_struct.servo_struct_name} {
                 % for longhand in style_struct.longhands:
                     ${longhand.ident}: longhands::${longhand.ident}::get_initial_value(),
@@ -6670,7 +6827,7 @@ fn cascade_with_cached_declarations<C: ComputedValues>(
         parent_style: &C,
         cached_style: &C,
         custom_properties: Option<Arc<::custom_properties::ComputedValuesMap>>,
-        mut error_reporter: Box<ParseErrorReporter + Send>)
+        mut error_reporter: StdBox<ParseErrorReporter + Send>)
         -> C {
     let mut context = computed::Context {
         is_root_element: false,
@@ -6681,7 +6838,7 @@ fn cascade_with_cached_declarations<C: ComputedValues>(
             shareable,
             WritingMode::empty(),
             parent_style.root_font_size(),
-            % for style_struct in STYLE_STRUCTS:
+            % for style_struct in active_style_structs():
                 % if style_struct.inherited:
                     parent_style
                 % else:
@@ -6698,13 +6855,13 @@ fn cascade_with_cached_declarations<C: ComputedValues>(
         // Declarations are already stored in reverse order.
         for declaration in sub_list.declarations.iter() {
             match *declaration {
-                % for style_struct in STYLE_STRUCTS:
+                % for style_struct in active_style_structs():
                     % for property in style_struct.longhands:
                         % if property.derived_from is None:
                             PropertyDeclaration::${property.camel_case}(ref
                                     ${'_' if not style_struct.inherited else ''}declared_value)
                                     => {
-                                    use properties::style_struct_traits::T${style_struct.trait_name};
+                                    use properties::style_struct_traits::${style_struct.trait_name};
                                 % if style_struct.inherited:
                                     if seen.get_${property.ident}() {
                                         continue
@@ -6762,7 +6919,7 @@ fn cascade_with_cached_declarations<C: ComputedValues>(
 
     if seen.get_font_style() || seen.get_font_weight() || seen.get_font_stretch() ||
             seen.get_font_family() {
-        use properties::style_struct_traits::TFont;
+        use properties::style_struct_traits::Font;
         context.mutate_style().mutate_font().compute_font_hash();
     }
 
@@ -6775,11 +6932,11 @@ pub type CascadePropertyFn<C /*: ComputedValues */> =
                      context: &mut computed::Context<C>,
                      seen: &mut PropertyBitField,
                      cacheable: &mut bool,
-                     error_reporter: &mut Box<ParseErrorReporter + Send>);
+                     error_reporter: &mut StdBox<ParseErrorReporter + Send>);
 
 pub fn make_cascade_vec<C: ComputedValues>() -> Vec<Option<CascadePropertyFn<C>>> {
     let mut result: Vec<Option<CascadePropertyFn<C>>> = Vec::new();
-    % for style_struct in STYLE_STRUCTS:
+    % for style_struct in active_style_structs():
         % for property in style_struct.longhands:
             let discriminant;
             unsafe {
@@ -6826,9 +6983,9 @@ pub fn cascade<C: ComputedValues>(
                shareable: bool,
                parent_style: Option<<&C>,
                cached_style: Option<<&C>,
-               mut error_reporter: Box<ParseErrorReporter + Send>)
+               mut error_reporter: StdBox<ParseErrorReporter + Send>)
                -> (C, bool) {
-    use properties::style_struct_traits::{TBorder, TBox, TColor, TFont, TOutline};
+    use properties::style_struct_traits::{Border, Box, Color, Font, Outline};
     let initial_values = C::initial_values();
     let (is_root_element, inherited_style) = match parent_style {
         Some(parent_style) => (false, parent_style),
@@ -6874,7 +7031,7 @@ pub fn cascade<C: ComputedValues>(
             shareable,
             WritingMode::empty(),
             inherited_style.root_font_size(),
-            % for style_struct in STYLE_STRUCTS:
+            % for style_struct in active_style_structs():
             % if style_struct.inherited:
             inherited_style
             % else:
@@ -6964,11 +7121,13 @@ pub fn cascade<C: ComputedValues>(
         if let Some(computed_display) = computed_display {
             let box_ = style.mutate_box();
             box_.set_display(computed_display);
-            box_.set__servo_display_for_hypothetical_box(if is_root_element {
-                computed_display
-            } else {
-                specified_display
-            });
+            % if CONFIG["product"] == "servo":
+                box_.set__servo_display_for_hypothetical_box(if is_root_element {
+                    computed_display
+                } else {
+                    specified_display
+                });
+            % endif
         }
     }
 
@@ -7007,7 +7166,7 @@ pub fn cascade<C: ComputedValues>(
 
     if seen.get_font_style() || seen.get_font_weight() || seen.get_font_stretch() ||
             seen.get_font_family() {
-        use properties::style_struct_traits::TFont;
+        use properties::style_struct_traits::Font;
         style.mutate_font().compute_font_hash();
     }
 

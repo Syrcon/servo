@@ -81,8 +81,8 @@ use profile_traits::mem;
 use profile_traits::time;
 use std::rc::Rc;
 use std::sync::mpsc::Sender;
-use util::opts;
 use util::resource_files::resources_dir_path;
+use util::{opts, prefs};
 
 pub use gleam::gl;
 
@@ -251,6 +251,7 @@ pub fn run_content_process(token: String) {
 
     let unprivileged_content = unprivileged_content_receiver.recv().unwrap();
     opts::set_defaults(unprivileged_content.opts());
+    prefs::extend_prefs(unprivileged_content.prefs());
 
     // Enter the sandbox if necessary.
     if opts::get().sandbox {
@@ -275,7 +276,8 @@ pub unsafe extern fn __errno_location() -> *mut i32 {
 
 #[cfg(not(target_os = "windows"))]
 fn create_sandbox() {
-    ChildSandbox::new(sandboxing::content_process_sandbox_profile()).activate().unwrap();
+    ChildSandbox::new(sandboxing::content_process_sandbox_profile()).activate()
+        .expect("Failed to activate sandbox!");
 }
 
 #[cfg(target_os = "windows")]

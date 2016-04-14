@@ -14,7 +14,7 @@ use euclid::size::Size2D;
 use ipc_channel::ipc::IpcSender;
 use msg::constellation_msg::{Failure, NavigationDirection, PipelineId};
 use msg::constellation_msg::{LoadData, SubpageId};
-use offscreen_gl_context::GLContextAttributes;
+use offscreen_gl_context::{GLContextAttributes, GLLimits};
 use style_traits::cursor::Cursor;
 use style_traits::viewport::ViewportConstraints;
 use url::Url;
@@ -32,6 +32,12 @@ pub enum LayoutMsg {
     ViewportConstrained(PipelineId, ViewportConstraints),
 }
 
+impl From<Failure> for LayoutMsg {
+    fn from(failure: Failure) -> LayoutMsg {
+        LayoutMsg::Failure(failure)
+    }
+}
+
 /// Messages from the script to the constellation.
 #[derive(Deserialize, Serialize)]
 pub enum ScriptMsg {
@@ -43,8 +49,8 @@ pub enum ScriptMsg {
     /// Requests that a new WebGL thread be created. (This is done in the constellation because
     /// WebGL uses the GPU and we don't want to give untrusted content access to the GPU.)
     CreateWebGLPaintThread(Size2D<i32>,
-                         GLContextAttributes,
-                         IpcSender<Result<IpcSender<CanvasMsg>, String>>),
+                           GLContextAttributes,
+                           IpcSender<Result<(IpcSender<CanvasMsg>, GLLimits), String>>),
     /// Dispatched after the DOM load event has fired on a document
     /// Causes a `load` event to be dispatched to any enclosing frame context element
     /// for the given pipeline.
@@ -85,4 +91,10 @@ pub enum ScriptMsg {
     SetDocumentState(PipelineId, DocumentState),
     /// Update the pipeline Url, which can change after redirections.
     SetFinalUrl(PipelineId, Url),
+}
+
+impl From<Failure> for ScriptMsg {
+    fn from(failure: Failure) -> ScriptMsg {
+        ScriptMsg::Failure(failure)
+    }
 }

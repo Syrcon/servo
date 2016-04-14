@@ -62,6 +62,7 @@ use net_traits::image::base::{Image, ImageMetadata};
 use net_traits::image_cache_thread::{ImageCacheChan, ImageCacheThread};
 use net_traits::response::HttpsState;
 use net_traits::storage_thread::StorageType;
+use offscreen_gl_context::GLLimits;
 use profile_traits::mem::ProfilerChan as MemProfilerChan;
 use profile_traits::time::ProfilerChan as TimeProfilerChan;
 use script_runtime::ScriptChan;
@@ -88,6 +89,7 @@ use style::properties::PropertyDeclarationBlock;
 use style::restyle_hints::ElementSnapshot;
 use style::selector_impl::PseudoElement;
 use style::values::specified::Length;
+use url::Origin as UrlOrigin;
 use url::Url;
 use util::str::{DOMString, LengthOrPercentageOrAuto};
 use uuid::Uuid;
@@ -275,7 +277,7 @@ impl<A: JSTraceable, B: JSTraceable, C: JSTraceable> JSTraceable for (A, B, C) {
     }
 }
 
-no_jsmanaged_fields!(bool, f32, f64, String, Url, AtomicBool, AtomicUsize, Uuid);
+no_jsmanaged_fields!(bool, f32, f64, String, Url, AtomicBool, AtomicUsize, UrlOrigin, Uuid);
 no_jsmanaged_fields!(usize, u8, u16, u32, u64);
 no_jsmanaged_fields!(isize, i8, i16, i32, i64);
 no_jsmanaged_fields!(Sender<T>);
@@ -308,7 +310,7 @@ no_jsmanaged_fields!(StorageType);
 no_jsmanaged_fields!(CanvasGradientStop, LinearGradientStyle, RadialGradientStyle);
 no_jsmanaged_fields!(LineCapStyle, LineJoinStyle, CompositionOrBlending);
 no_jsmanaged_fields!(RepetitionStyle);
-no_jsmanaged_fields!(WebGLError);
+no_jsmanaged_fields!(WebGLError, GLLimits);
 no_jsmanaged_fields!(TimeProfilerChan);
 no_jsmanaged_fields!(MemProfilerChan);
 no_jsmanaged_fields!(PseudoElement);

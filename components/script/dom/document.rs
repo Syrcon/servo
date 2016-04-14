@@ -94,6 +94,7 @@ use net_traits::CookieSource::NonHTTP;
 use net_traits::response::HttpsState;
 use net_traits::{AsyncResponseTarget, PendingAsyncLoad};
 use num::ToPrimitive;
+use origin::Origin;
 use script_runtime::ScriptChan;
 use script_thread::{MainThreadScriptChan, MainThreadScriptMsg, Runnable};
 use script_traits::UntrustedNodeAddress;
@@ -209,18 +210,22 @@ pub struct Document {
     modified_elements: DOMRefCell<HashMap<JS<Element>, ElementSnapshot>>,
     /// http://w3c.github.io/touch-events/#dfn-active-touch-point
     active_touch_points: DOMRefCell<Vec<JS<Touch>>>,
-    /// DOM-Related Navigation Timing properties:
-    /// http://w3c.github.io/navigation-timing/#widl-PerformanceTiming-domLoading
+    /// Navigation Timing properties:
+    /// https://w3c.github.io/navigation-timing/#sec-PerformanceNavigationTiming
     dom_loading: Cell<u64>,
     dom_interactive: Cell<u64>,
     dom_content_loaded_event_start: Cell<u64>,
     dom_content_loaded_event_end: Cell<u64>,
     dom_complete: Cell<u64>,
+    load_event_start: Cell<u64>,
+    load_event_end: Cell<u64>,
     /// Vector to store CSS errors
     css_errors_store: DOMRefCell<Vec<CSSError>>,
     /// https://html.spec.whatwg.org/multipage/#concept-document-https-state
     https_state: Cell<HttpsState>,
     touchpad_pressure_phase: Cell<TouchpadPressurePhase>,
+    /// The document's origin.
+    origin: Origin,
 }
 
 #[derive(JSTraceable, HeapSizeOf)]
@@ -544,14 +549,14 @@ impl Document {
             DocumentReadyState::Loading => {
                 // https://developer.mozilla.org/en-US/docs/Web/Events/mozbrowserconnected
                 self.trigger_mozbrowser_event(MozBrowserEvent::Connected);
-                update_with_current_time(&self.dom_loading);
+                update_with_current_time_ms(&self.dom_loading);
             },
             DocumentReadyState::Complete => {
                 // https://developer.mozilla.org/en-US/docs/Web/Events/mozbrowserloadend
                 self.trigger_mozbrowser_event(MozBrowserEvent::LoadEnd);
-                update_with_current_time(&self.dom_complete);
+                update_with_current_time_ms(&self.dom_complete);
             },
-            DocumentReadyState::Interactive => update_with_current_time(&self.dom_interactive),
+            DocumentReadyState::Interactive => update_with_current_time_ms(&self.dom_interactive),
         };
 
         self.ready_state.set(state);
@@ -1447,7 +1452,7 @@ impl Document {
         }
         self.domcontentloaded_dispatched.set(true);
 
-        update_with_current_time(&self.dom_content_loaded_event_start);
+        update_with_current_time_ms(&self.dom_content_loaded_event_start);
 
         let chan = MainThreadScriptChan(self.window().main_thread_script_chan().clone()).clone();
         let doctarget = Trusted::new(self.upcast::<EventTarget>(), chan);
@@ -1458,7 +1463,7 @@ impl Document {
                              ReflowQueryType::NoQuery,
                              ReflowReason::DOMContentLoaded);
 
-        update_with_current_time(&self.dom_content_loaded_event_end);
+        update_with_current_time_ms(&self.dom_content_loaded_event_end);
     }
 
     pub fn notify_constellation_load(&self) {
@@ -1513,6 +1518,14 @@ impl Document {
         self.dom_complete.get()
     }
 
+    pub fn get_load_event_start(&self) -> u64 {
+        self.load_event_start.get()
+    }
+
+    pub fn get_load_event_end(&self) -> u64 {
+        self.load_event_end.get()
+    }
+
     // https://html.spec.whatwg.org/multipage/#fire-a-focus-event
     fn fire_focus_event(&self, focus_event_type: FocusEventType, node: &Node, relatedTarget: Option<&EventTarget>) {
         let (event_name, does_bubble) = match focus_event_type {
@@ -1534,14 +1547,6 @@ impl Document {
 
     /// https://html.spec.whatwg.org/multipage/#cookie-averse-document-object
     fn is_cookie_averse(&self) -> bool {
-        /// https://url.spec.whatwg.org/#network-scheme
-        fn url_has_network_scheme(url: &Url) -> bool {
-            match &*url.scheme {
-                "ftp" | "http" | "https" => true,
-                _ => false,
-            }
-        }
-
         self.browsing_context.is_none() || !url_has_network_scheme(&self.url)
     }
 
@@ -1580,6 +1585,14 @@ impl LayoutDocumentHelpers for LayoutJS<Document> {
     }
 }
 
+/// https://url.spec.whatwg.org/#network-scheme
+fn url_has_network_scheme(url: &Url) -> bool {
+    match &*url.scheme {
+        "ftp" | "http" | "https" => true,
+        _ => false,
+    }
+}
+
 impl Document {
     pub fn new_inherited(window: &Window,
                          browsing_context: Option<&BrowsingContext>,
@@ -1590,12 +1603,21 @@ impl Document {
                          source: DocumentSource,
                          doc_loader: DocumentLoader)
                          -> Document {
-        let url = url.unwrap_or_else(|| url!("about:blank"));
+        let url = url.unwrap_or_else(|| Url::parse("about:blank").unwrap());
 
         let (ready_state, domcontentloaded_dispatched) = if source == DocumentSource::FromParser {
             (DocumentReadyState::Loading, false)
         } else {
             (DocumentReadyState::Complete, true)
+        };
+
+        // Incomplete implementation of Document origin specification at
+        // https://html.spec.whatwg.org/multipage/#origin:document
+        let origin = if url_has_network_scheme(&url) {
+            Origin::new(&url)
+        } else {
+            // Default to DOM standard behaviour
+            Origin::opaque_identifier()
         };
 
         Document {
@@ -1658,9 +1680,12 @@ impl Document {
             dom_content_loaded_event_start: Cell::new(Default::default()),
             dom_content_loaded_event_end: Cell::new(Default::default()),
             dom_complete: Cell::new(Default::default()),
+            load_event_start: Cell::new(Default::default()),
+            load_event_end: Cell::new(Default::default()),
             css_errors_store: DOMRefCell::new(vec![]),
             https_state: Cell::new(HttpsState::None),
             touchpad_pressure_phase: Cell::new(TouchpadPressurePhase::BeforeClick),
+            origin: origin,
         }
     }
 
@@ -1856,9 +1881,18 @@ impl DocumentMethods for Document {
 
     // https://html.spec.whatwg.org/multipage/#relaxing-the-same-origin-restriction
     fn Domain(&self) -> DOMString {
-        // TODO: This should use the effective script origin when it exists
-        let origin = self.window.get_url();
-        DOMString::from(origin.serialize_host().unwrap_or_else(|| "".to_owned()))
+        // Step 1.
+        if self.browsing_context().is_none() {
+            return DOMString::new();
+        }
+
+        if let Some(host) = self.origin.host() {
+            // Step 4.
+            DOMString::from(host.serialize())
+        } else {
+            // Step 3.
+            DOMString::new()
+        }
     }
 
     // https://dom.spec.whatwg.org/#dom-document-documenturi
@@ -2485,10 +2519,11 @@ impl DocumentMethods for Document {
             return Ok(DOMString::new());
         }
 
-        let url = self.url();
-        if !is_scheme_host_port_tuple(&url) {
+        if !self.origin.is_scheme_host_port_tuple() {
             return Err(Error::Security);
         }
+
+        let url = self.url();
         let (tx, rx) = ipc::channel().unwrap();
         let _ = self.window.resource_thread().send(GetCookiesForUrl((*url).clone(), tx, NonHTTP));
         let cookies = rx.recv().unwrap();
@@ -2501,10 +2536,11 @@ impl DocumentMethods for Document {
             return Ok(());
         }
 
-        let url = self.url();
-        if !is_scheme_host_port_tuple(url) {
+        if !self.origin.is_scheme_host_port_tuple() {
             return Err(Error::Security);
         }
+
+        let url = self.url();
         let _ = self.window
                     .resource_thread()
                     .send(SetCookiesForUrl((*url).clone(), String::from(cookie), NonHTTP));
@@ -2708,13 +2744,10 @@ impl DocumentMethods for Document {
     }
 }
 
-fn is_scheme_host_port_tuple(url: &Url) -> bool {
-    url.host().is_some() && url.port_or_default().is_some()
-}
-
-fn update_with_current_time(marker: &Cell<u64>) {
+fn update_with_current_time_ms(marker: &Cell<u64>) {
     if marker.get() == Default::default() {
-        let current_time_ms = time::get_time().sec * 1000;
+        let time = time::get_time();
+        let current_time_ms = time.sec * 1000 + time.nsec as i64 / 1000000;
         marker.set(current_time_ms as u64);
     }
 }
@@ -2744,7 +2777,14 @@ impl DocumentProgressHandler {
                                EventCancelable::NotCancelable);
         let wintarget = window.upcast::<EventTarget>();
         event.set_trusted(true);
+
+        // http://w3c.github.io/navigation-timing/#widl-PerformanceNavigationTiming-loadEventStart
+        update_with_current_time_ms(&document.load_event_start);
+
         let _ = wintarget.dispatch_event_with_target(document.upcast(), &event);
+
+        // http://w3c.github.io/navigation-timing/#widl-PerformanceNavigationTiming-loadEventEnd
+        update_with_current_time_ms(&document.load_event_end);
 
         document.notify_constellation_load();
 

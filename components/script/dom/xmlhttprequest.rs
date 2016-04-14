@@ -350,7 +350,7 @@ impl XMLHttpRequestMethods for XMLHttpRequest {
                 }
 
                 // Step 2
-                let base = self.global().r().get_url();
+                let base = self.global().r().api_base_url();
                 // Step 6
                 let mut parsed_url = match base.join(&url.0) {
                     Ok(parsed) => parsed,
@@ -828,6 +828,12 @@ impl XMLHttpRequestMethods for XMLHttpRequest {
 
     // https://xhr.spec.whatwg.org/#the-responsexml-attribute
     fn GetResponseXML(&self) -> Fallible<Option<Root<Document>>> {
+        // TODO(#2823): Until [Exposed] is implemented, this attribute needs to return null
+        //              explicitly in the worker scope.
+        if let GlobalRoot::Worker(_) = self.global() {
+            return Ok(None);
+        }
+
         match self.response_type.get() {
             XMLHttpRequestResponseType::_empty | XMLHttpRequestResponseType::Document => {
                 // Step 3

@@ -594,12 +594,8 @@ impl Node {
 
         let html_element = document.GetDocumentElement();
 
-        let is_body_element = html_element.r().and_then(|root| {
-            let node = root.upcast::<Node>();
-            node.children().find(|child| { child.is::<HTMLBodyElement>() }).map(|node| {
-                *node.r() == *self
-            })
-        }).unwrap_or(false);
+        let is_body_element = self.downcast::<HTMLBodyElement>()
+                                  .map_or(false, |e| e.is_the_html_body_element());
 
         let scroll_area = window.scroll_area_query(self.to_trusted_node_address());
 
@@ -1166,34 +1162,20 @@ impl Iterator for PrecedingNodeIterator {
             Some(current) => current,
         };
 
-        if self.root == current {
-            self.current = None;
-            return None
-        }
-
-        let node = current;
-        if let Some(previous_sibling) = node.GetPreviousSibling() {
+        self.current = if self.root == current {
+            None
+        } else if let Some(previous_sibling) = current.GetPreviousSibling() {
             if self.root == previous_sibling {
-                self.current = None;
-                return None
+                None
+            } else if let Some(last_child) = previous_sibling.descending_last_children().last() {
+                Some(last_child)
+            } else {
+                Some(previous_sibling)
             }
-
-            if let Some(last_child) = previous_sibling.descending_last_children().last() {
-                self.current = Some(last_child);
-                return previous_sibling.descending_last_children().last()
-            }
-
-            self.current = Some(previous_sibling);
-            return node.GetPreviousSibling()
+        } else {
+            current.GetParentNode()
         };
-
-        if let Some(parent_node) = node.GetParentNode() {
-            self.current = Some(parent_node);
-            return node.GetParentNode()
-        }
-
-        self.current = None;
-        None
+        self.current.clone()
     }
 }
 

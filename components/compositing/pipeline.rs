@@ -26,6 +26,7 @@ use profile_traits::time;
 use script_traits::{ConstellationControlMsg, InitialScriptState, MozBrowserEvent};
 use script_traits::{LayoutControlMsg, LayoutMsg, NewLayoutInfo, ScriptMsg};
 use script_traits::{ScriptToCompositorMsg, ScriptThreadFactory, TimerEventRequest};
+use std::collections::HashMap;
 use std::mem;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use url::Url;
@@ -33,7 +34,7 @@ use util;
 use util::geometry::{PagePx, ViewportPx};
 use util::ipc::OptionalIpcSender;
 use util::opts::{self, Opts};
-use util::prefs;
+use util::prefs::{self, Pref};
 use util::thread;
 use webrender_traits;
 
@@ -139,10 +140,7 @@ impl Pipeline {
             .expect("Pipeline script to compositor chan");
         let mut pipeline_port = Some(pipeline_port);
 
-        let failure = Failure {
-            pipeline_id: state.id,
-            parent_info: state.parent_info,
-        };
+        let failure = Failure::new(state.id, state.parent_info);
 
         let window_size = state.window_size.map(|size| {
             WindowSizeData {
@@ -181,7 +179,7 @@ impl Pipeline {
                     subpage_id: subpage_id,
                     load_data: state.load_data.clone(),
                     paint_chan: layout_to_paint_chan.clone().to_opaque(),
-                    failure: failure,
+                    failure: failure.clone(),
                     pipeline_port: mem::replace(&mut pipeline_port, None)
                         .expect("script_pipeline != None but pipeline_port == None"),
                     layout_shutdown_chan: layout_shutdown_chan.clone(),
@@ -229,9 +227,10 @@ impl Pipeline {
             layout_to_constellation_chan: state.layout_to_constellation_chan,
             script_chan: script_chan,
             load_data: state.load_data.clone(),
-            failure: failure,
+            failure: failure.clone(),
             script_port: script_port,
             opts: (*opts::get()).clone(),
+            prefs: prefs::get_cloned(),
             layout_to_paint_chan: layout_to_paint_chan,
             pipeline_port: pipeline_port,
             layout_shutdown_chan: layout_shutdown_chan,
@@ -408,6 +407,7 @@ pub struct UnprivilegedPipelineContent {
     script_port: Option<IpcReceiver<ConstellationControlMsg>>,
     layout_to_paint_chan: OptionalIpcSender<LayoutToPaintMsg>,
     opts: Opts,
+    prefs: HashMap<String, Pref>,
     paint_shutdown_chan: IpcSender<()>,
     pipeline_port: Option<IpcReceiver<LayoutControlMsg>>,
     pipeline_namespace_id: PipelineNamespaceId,
@@ -471,6 +471,10 @@ impl UnprivilegedPipelineContent {
 
     pub fn opts(&self) -> Opts {
         self.opts.clone()
+    }
+
+    pub fn prefs(&self) -> HashMap<String, Pref> {
+        self.prefs.clone()
     }
 }
 

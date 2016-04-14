@@ -52,7 +52,8 @@ use hyper::mime::{Mime, SubLevel, TopLevel};
 use ipc_channel::ipc::{self, IpcSender};
 use ipc_channel::router::ROUTER;
 use js::jsapi::{DOMProxyShadowsResult, HandleId, HandleObject, RootedValue};
-use js::jsapi::{JSAutoRequest, JSContext, JS_SetWrapObjectCallbacks, JSTracer};
+use js::jsapi::{JSAutoRequest, JS_SetWrapObjectCallbacks};
+use js::jsapi::{JSContext, JSTracer};
 use js::jsval::UndefinedValue;
 use js::rust::Runtime;
 use layout_interface::{ReflowQueryType};
@@ -450,7 +451,7 @@ impl ScriptThreadFactory for ScriptThread {
         let ConstellationChan(const_chan) = state.constellation_chan.clone();
         let (script_chan, script_port) = channel();
         let layout_chan = LayoutChan(layout_chan.sender());
-        let failure_info = state.failure_info;
+        let failure_info = state.failure_info.clone();
         thread::spawn_named_with_send_on_failure(format!("ScriptThread {:?}", state.id),
                                                thread_state::SCRIPT,
                                                move || {
@@ -486,7 +487,7 @@ impl ScriptThreadFactory for ScriptThread {
 
             // This must always be the very last operation performed before the thread completes
             failsafe.neuter();
-        }, ConstellationMsg::Failure(failure_info), const_chan);
+        }, failure_info, const_chan);
     }
 }
 
@@ -1887,7 +1888,7 @@ impl ScriptThread {
         };
 
         if load_data.url.scheme == "javascript" {
-            load_data.url = url!("about:blank");
+            load_data.url = Url::parse("about:blank").unwrap();
         }
 
         resource_thread.send(ControlMsg::Load(NetLoadData {
