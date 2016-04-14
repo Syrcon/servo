@@ -929,7 +929,7 @@ impl ScriptThread {
             MainThreadScriptMsg::DOMManipulation(msg) =>
                 msg.handle_msg(self),
             MainThreadScriptMsg::ParserOperation(msg) =>
-                process_parser_operation
+                process_parser_operation(msg),
         }
     }
 

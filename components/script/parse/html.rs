@@ -56,11 +56,9 @@ fn insert(parent: &Node, reference_child: Option<&Node>, child: NodeOrText<JS<No
 /// Local type replacing JS<Node>
 pub struct ParserNode {
     id: usize,
-    Option<QualName>,
+    option: Option<QualName>,
 }
 
-/// HashMap for storing new message types and corresponding JS<T> types
-let mut Hashtable:Arc<Mutex<HashMap<<T>, JS<Node>>>> = Arc::new(Mutex::new(HashMap::new()));
 
 impl<'a> TreeSink for servohtmlparser::Sink {
     type Output = Self;
@@ -68,10 +66,14 @@ impl<'a> TreeSink for servohtmlparser::Sink {
 
     type Handle = JS<Node>;
 
-    fn generate_unique_id(&mut self) -> usize {
-        servohtmlparser::Sink::next_parse_node_id += 1;
-        servohtmlparser::Sink::next_parse_node_id
-    }
+    /// HashMap for storing new message types and corresponding JS<T> types
+    // let mut Hashtable:Arc<Mutex<HashMap<<T>, JS<Node>>>> = Arc::new(Mutex::new(HashMap::new()));
+    //let Hashtable<servohtmlparser::Sink::Hashtable> = Arc::new(Mutex::new(HashMap::new()));
+
+    // fn generate_unique_id(&mut self) -> usize {
+    //     servohtmlparser::Sink::next_parse_node_id += 1;
+    //     servohtmlparser::Sink::next_parse_node_id
+    // }
 
     fn get_document(&mut self) -> JS<Node> {
         JS::from_ref(self.document.upcast())
@@ -108,6 +110,16 @@ impl<'a> TreeSink for servohtmlparser::Sink {
         JS::from_ref(elem.upcast())
     }
 
+    // let self_document = &*self.document;
+
+    // fn create_element(&mut self, name: QualName, attrs: Vec<Attribute>)
+    //         -> JS<Node> {
+    //     let mut ElementParserNode<ParserNode> = ParserNode{ id: generate_unique_id(&mut self)};
+    //     Hashtable.lock().unwrap().insert(ElementParserNode, something);
+    //
+    //     self.sender.send(MainThreadScriptMsg::ParserOperation(ParserOperationMsg::CreateElement(self_document, name, attrs, Hashtable)));
+    // }
+
     fn create_comment(&mut self, text: StrTendril) -> JS<Node> {
         let comment = Comment::new(DOMString::from(String::from(text)), &*self.document);
         JS::from_ref(comment.upcast())
@@ -135,13 +147,22 @@ impl<'a> TreeSink for servohtmlparser::Sink {
     }
 
     fn append(&mut self, parent: JS<Node>, child: NodeOrText<JS<Node>>) {
-        let mut parentParserNode<ParserNode> = ParserNode{ id: generate_unique_id(&mut self)};
-        let mut childParserNode<NodeOrText<<ParserNode>>> = NodeOrText<ParserNode{ id: generate_unique_id(&mut self)}>;
-        Hashtable.lock().unwrap().insert(parentParserNode, parent);
-        Hashtable.lock().unwrap().insert(childParserNode, child);
-        let self_ = &mut self;
-        self.sender.send(MainThreadScriptMsg::ParserOperation(ParserOperationMsg::Append(self_, parentParserNode, childParserNode, Hashtable)));
-    }
+            // FIXME(#3701): Use a simpler algorithm and merge adjacent text nodes
+            insert(&parent, None, child);
+        }
+
+    // fn append(&mut self, parent: JS<Node>, child: NodeOrText<JS<Node>>) {
+    //     let win = self.window();
+    //     let mut parentParserNode<ParserNode> = ParserNode{ id: generate_unique_id(&mut self)};
+    //     let mut childParserNode<NodeOrText<<ParserNode>>> = NodeOrText<ParserNode{ id: generate_unique_id(&mut self)}>;
+    //     Hashtable.lock().unwrap().insert(parentParserNode, parent);
+    //     Hashtable.lock().unwrap().insert(childParserNode, child);
+    //     //let self_ = &mut self;
+    //     //self.sender.send(MainThreadScriptMsg::ParserOperation(ParserOperationMsg::Append(self_, parentParserNode, childParserNode, Hashtable)));
+    //     win.main_thread_script_chan().send(MainThreadScriptMsg::ParserOperation(ParserOperationMsg::Append(parentParserNode, childParserNode, Hashtable)));
+    //     //document.window().main_thread_script_chan().send(MainThreadScriptMsg::ParserOperation(ParserOperationMsg::Append(parentParserNode, childParserNode, Hashtable)));
+    //     //self.sender.send(MainThreadScriptMsg::ParserOperation(ParserOperationMsg::Append(parentParserNode, childParserNode, Hashtable)));
+    // }
 
     fn append_doctype_to_document(&mut self, name: StrTendril, public_id: StrTendril,
                                   system_id: StrTendril) {
@@ -187,21 +208,29 @@ impl<'a> TreeSink for servohtmlparser::Sink {
     }
 }
 
+ // instead of returning values in process_parser_operation,
+ // they will need to take the value that would be returned
+ // and instead stash it in the hashtable with the same ID as the ParserNode
+ // that was returned from the corresponding method in Sink
+ // the ParserNodes that are returned from the methods in Sink correspond to asynchronous operations,
+ // and the code in process_parser_operation resolves those operations and associates them with concrete results.
+ //
+
 // message processing
 pub fn process_parser_operation(op: ParserOperation) {
     match op {
-        ParserOperation::Append(self_, parentParserNode, childParserNode, Hashtable) {
-            let parent = match Hashtable.get(parentParserNode) {
-                Some(corresponding_handle) => corresponding_handle,
-                None => println!("{} is not found?", parentParserNode)
-            }
-            let child = match Hashtable.get(childParserNode) {
-                Some(corresponding_handle) => corresponding_handle,
-                None => println!("{} is not found?", childParserNode)
-            }
-            // FIXME(#3701): Use a simpler algorithm and merge adjacent text nodes
-            insert(&parent, None, child);
-        }
+        // ParserOperation::Append(parentParserNode, childParserNode, Hashtable) {
+        //     let parent = match Hashtable.lock().unwrap().get(parentParserNode) {
+        //         Some(corresponding_handle) => corresponding_handle,
+        //         None => println!("{} is not found?", parentParserNode)
+        //     }
+        //     let child = match Hashtable.lock().unwrap().get(childParserNode) {
+        //         Some(corresponding_handle) => corresponding_handle,
+        //         None => println!("{} is not found?", childParserNode)
+        //     }
+        //     // FIXME(#3701): Use a simpler algorithm and merge adjacent text nodes
+        //     insert(&parent, None, child);
+        // }
     }
 }
 

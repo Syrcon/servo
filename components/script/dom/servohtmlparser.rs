@@ -42,7 +42,8 @@ use url::Url;
 pub struct Sink {
     pub base_url: Option<Url>,
     pub document: JS<Document>,
-    pub next_parse_node_id: usize,
+    // pub next_parse_node_id: usize,
+    // pub Hashtable: Arc<Mutex<HashMap<<T>, <T>>>>,
 }
 
 /// FragmentContext is used only to pass this group of related values
@@ -380,6 +381,7 @@ impl ServoHTMLParser {
         let sink = Sink {
             base_url: base_url,
             document: JS::from_ref(document),
+            // next_parse_node_id: 0,
         };
 
         let tb = TreeBuilder::new(sink, TreeBuilderOpts {
@@ -409,6 +411,7 @@ impl ServoHTMLParser {
         let sink = Sink {
             base_url: base_url,
             document: JS::from_ref(document),
+            // next_parse_node_id: 0,
         };
 
         let tb_opts = TreeBuilderOpts {
