@@ -31,12 +31,16 @@ use net_traits::{AsyncResponseListener, Metadata, NetworkError};
 use network_listener::PreInvoke;
 use parse::html::{ParseNode, ParseNodeData, process_op, ParserOperation};
 use parse::Parser;
+use parser_thread;
 use script_runtime::ScriptChan;
 use script_thread::{MainThreadScriptMsg, ScriptThread};
 use std::cell::Cell;
 use std::cell::UnsafeCell;
 use std::collections::HashMap;
 use std::default::Default;
+use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::{Arc, Mutex};
+use std::thread;
 use std::ptr;
 use url::Url;
 use util::resource_files::read_resource_file;
@@ -46,10 +50,10 @@ use util::resource_files::read_resource_file;
 pub struct Sink {
     pub base_url: Option<Url>,
     pub document: JS<Document>,
-    pub nodes: HashMap<usize, JS<Node>>,
+    pub nodes: Arc<Mutex<HashMap<usize, JS<Node>>>>,
     // FIXME: interior mutability only needed until html5ever is updated to make
     //        get_template_contents mutable.
-    pub parse_data: DOMRefCell<HashMap<usize, ParseNodeData>>,
+    pub parse_data: DOMRefCell<Arc<Mutex<HashMap<usize, ParseNodeData>>>>,
     next_parse_node_id: Cell<usize>,
     pending_parse_ops: Cell<usize>,
 }
@@ -59,8 +63,8 @@ impl Sink {
         Sink {
             base_url: base_url,
             document: JS::from_ref(document),
-            nodes: HashMap::new(),
-            parse_data: DOMRefCell::new(HashMap::new()),
+            nodes: Arc::new(Mutex::new(HashMap::new())),
+            parse_data: DOMRefCell::new(Arc::new(Mutex::new(HashMap::new()))),
             // 0 is reserved for the root document
             next_parse_node_id: Cell::new(1),
             pending_parse_ops: Cell::new(0),
@@ -400,8 +404,6 @@ impl PreInvoke for ParserContext {
 #[dom_struct]
 pub struct ServoHTMLParser {
     reflector_: Reflector,
-    #[ignore_heap_size_of = "Defined in html5ever"]
-    tokenizer: DOMRefCell<Tokenizer>,
     /// Input chunks received but not yet passed to the parser.
     pending_input: DOMRefCell<Vec<String>>,
     /// The document associated with this parser.
@@ -414,6 +416,12 @@ pub struct ServoHTMLParser {
     /// correspond to a page load.
     pipeline: Option<PipelineId>,
     finished: Cell<bool>,
+    #[derive(HeapSizeOf)]
+    nodes: Arc<Mutex<HashMap<usize, JS<Node>>>>,
+    #[derive(HeapSizeOf)]
+    parse_data: Arc<Mutex<DOMRefCell<HashMap<usize, ParseNodeData>>>>,
+    #[ignore_heap_size_of = "Defined in html5ever"]
+    parse_sender: Sender<ParserMsg>,
 }
 
 impl<'a> Parser for &'a ServoHTMLParser {
@@ -439,30 +447,38 @@ impl ServoHTMLParser {
     #[allow(unrooted_must_root)]
     pub fn new(base_url: Option<Url>, document: &Document, pipeline: Option<PipelineId>)
                -> Root<ServoHTMLParser> {
-        let mut sink = Sink::new(base_url, document);
-        sink.nodes.insert(0, JS::from_ref(document.upcast()));
-        sink.parse_data.borrow_mut().insert(0, ParseNodeData { qual_name: None, parent: None });
 
-        let tb = TreeBuilder::new(sink, TreeBuilderOpts {
-            ignore_missing_rules: true,
-            .. Default::default()
-        });
+            // here we create our parser thread
+            parser_thread = ParserThread::new(base_url, document, pipeline);
 
-        let tok = tokenizer::Tokenizer::new(tb, Default::default());
-
-        let parser = ServoHTMLParser {
-            reflector_: Reflector::new(),
-            tokenizer: DOMRefCell::new(tok),
-            pending_input: DOMRefCell::new(vec!()),
-            document: JS::from_ref(document),
-            suspended: Cell::new(false),
-            last_chunk_received: Cell::new(false),
-            pipeline: pipeline,
-            finished: Cell::new(false),
-        };
-
-        reflect_dom_object(box parser, GlobalRef::Window(document.window()),
-                           ServoHTMLParserBinding::Wrap)
+            // let mut sink = Sink::new(base_url, document);
+            //
+            // // here hashmaps should be already in Arc<Mutex<>> ?
+            // sink.nodes.insert(0, JS::from_ref(document.upcast()));
+            // sink.parse_data.borrow_mut().insert(0, ParseNodeData { qual_name: None, parent: None });
+            //
+            // let tb = TreeBuilder::new(sink, TreeBuilderOpts {
+            //     ignore_missing_rules: true,
+            //     .. Default::default()
+            // });
+            //
+            // let tok = tokenizer::Tokenizer::new(tb, Default::default());
+            //
+            // let parser = ServoHTMLParser {
+            //     reflector_: Reflector::new(),
+            //     tokenizer: DOMRefCell::new(tok),
+            //     pending_input: DOMRefCell::new(vec!()),
+            //     document: JS::from_ref(document),
+            //     suspended: Cell::new(false),
+            //     last_chunk_received: Cell::new(false),
+            //     pipeline: pipeline,
+            //     finished: Cell::new(false),
+            //     nodes: sink.nodes,
+            //     parse_data: sink.parse_data,
+            // };
+            //
+            // reflect_dom_object(box parser, GlobalRef::Window(document.window()),
+            //                    ServoHTMLParserBinding::Wrap)
     }
 
     #[allow(unrooted_must_root)]
@@ -500,11 +516,6 @@ impl ServoHTMLParser {
         panic!()
     }
 
-    #[inline]
-    pub fn tokenizer(&self) -> &DOMRefCell<Tokenizer> {
-        &self.tokenizer
-    }
-
     pub fn set_plaintext_state(&self) {
         self.tokenizer.borrow_mut().set_plaintext_state()
     }
@@ -513,9 +524,6 @@ impl ServoHTMLParser {
         self.tokenizer.borrow_mut().end()
     }
 
-    pub fn pending_input(&self) -> &DOMRefCell<Vec<String>> {
-        &self.pending_input
-    }
 
     pub fn invoke(&self, op: ParserOperation) {
         let mut tokenizer = self.tokenizer.borrow_mut();

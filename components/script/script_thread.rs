@@ -71,6 +71,7 @@ use network_listener::NetworkListener;
 use page::{Frame, IterablePage, Page};
 use parse::html::{ParseContext, parse_html, ParserOperation};
 use parse::xml::{self, parse_xml};
+use parser_thread;
 use profile_traits::mem::{self, OpaqueSender, Report, ReportKind, ReportsChan};
 use profile_traits::time::{self, ProfilerCategory, profile};
 use script_runtime::{CommonScriptMsg, ScriptChan, ScriptThreadEventCategory};
