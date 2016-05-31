@@ -24,6 +24,8 @@ use devtools_traits::{ScriptToDevtoolsControlMsg, WorkerId};
 use document_loader::DocumentLoader;
 use dom::bindings::cell::DOMRefCell;
 use dom::bindings::codegen::Bindings::DocumentBinding::{DocumentMethods, DocumentReadyState};
+use dom::bindings::codegen::Bindings::HTMLTemplateElementBinding::HTMLTemplateElementMethods;
+use dom::bindings::codegen::Bindings::NodeBinding::NodeMethods;
 use dom::bindings::conversions::{FromJSValConvertible, StringificationBehavior};
 use dom::bindings::global::GlobalRef;
 use dom::bindings::inheritance::Castable;
@@ -33,12 +35,18 @@ use dom::bindings::refcounted::{LiveDOMReferences, Trusted};
 use dom::bindings::trace::JSTraceable;
 use dom::bindings::utils::WRAP_CALLBACKS;
 use dom::browsingcontext::BrowsingContext;
+use dom::comment::Comment;
 use dom::document::{Document, DocumentProgressHandler, DocumentSource, FocusType, IsHTMLDocument};
-use dom::element::Element;
+use dom::documenttype::DocumentType;
+use dom::element::{Element, ElementCreator};
 use dom::event::{Event, EventBubbles, EventCancelable};
 use dom::htmlanchorelement::HTMLAnchorElement;
+use dom::htmlscriptelement::HTMLScriptElement;
+use dom::htmltemplateelement::HTMLTemplateElement;
 use dom::node::{Node, NodeDamage, window_from_node};
-use dom::servohtmlparser::{ParserContext, ParserRoot, ServoHTMLParser};
+// use dom::servohtmlparser::{ParserContext, ParserRoot, ServoHTMLParser, ParserThreadChan};
+use dom::servohtmlparser::{ParserContext, ParserRoot, Sink, ServoHTMLParser, Tokenizer};
+use dom::text::Text;
 use dom::uievent::UIEvent;
 use dom::window::{ReflowReason, ScriptHelpers, Window};
 use dom::worker::TrustedWorkerAddress;
@@ -69,9 +77,9 @@ use net_traits::storage_thread::StorageThread;
 use net_traits::{AsyncResponseTarget, ControlMsg, LoadConsumer, LoadContext, Metadata, ResourceThread};
 use network_listener::NetworkListener;
 use page::{Frame, IterablePage, Page};
-use parse::html::{ParseContext, parse_html, ParserOperation};
+use parse::html::{ParseContext, parse_html, ServoNodeOrText};
 use parse::xml::{self, parse_xml};
-use parser_thread;
+use parser_thread::{ParserThread, ParserThreadMsg, ParserOperation, ParserThreadChan, ParserPort};
 use profile_traits::mem::{self, OpaqueSender, Report, ReportKind, ReportsChan};
 use profile_traits::time::{self, ProfilerCategory, profile};
 use script_runtime::{CommonScriptMsg, ScriptChan, ScriptThreadEventCategory};
@@ -87,6 +95,7 @@ use std::any::Any;
 use std::borrow::ToOwned;
 use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
+use std::collections::HashMap;
 use std::option::Option;
 use std::rc::Rc;
 use std::result::Result;
@@ -261,6 +270,16 @@ impl ScriptPort for Receiver<(TrustedWorkerAddress, MainThreadScriptMsg)> {
         }
     }
 }
+//
+// impl ParserPort for Receiver<ParserThreadMsg> {
+//     fn recv(&self) -> Result<ParserOperation, ()> {
+//         match self.recv() {
+//             Ok(ParserThreadMsg::ParserToScriptMsg(msg)) => Ok(msg),
+//             Ok(_) => panic!("unexpected parser thread message!"),
+//             _ => Err(()),
+//         }
+//     }
+// }
 
 /// Encapsulates internal communication of shared messages within the script thread.
 #[derive(JSTraceable)]
@@ -1132,6 +1151,103 @@ impl ScriptThread {
     fn handle_parser(&self, parser: Trusted<ServoHTMLParser>, msg: ParserOperation) {
         let parser = parser.root();
         parser.invoke(msg);
+    }
+
+    fn handle_parser_msg(&self, nodes: &mut Arc<Mutex<HashMap<usize, JS<Node>>>>, msg: ParserOperation) {
+        let document = Root::from_ref(&**nodes.lock().unwrap().get(&0).unwrap());
+        let document = document.downcast::<Document>().unwrap();
+        loop {
+            match self.port_.recv().unwrap() {
+                ParserOperation::GetTemplateContents(target, contents) => {
+                    let target = Root::from_ref(&**nodes.lock().unwrap().get(&target).unwrap());
+                    let template = target.downcast::<HTMLTemplateElement>()
+                                         .expect("tried to get template contents of \
+                                                  non-HTMLTemplateElement in HTML parsing");
+                    assert!(nodes.lock().unwrap().insert(contents, JS::from_ref(template.Content().upcast())).is_none());
+                }
+
+                ParserOperation::CreateElement(name, attrs, id) => {
+                    let elem = Element::create(name, None, &*document,
+                                               ElementCreator::ParserCreated);
+
+                    for attr in attrs {
+                        elem.set_attribute_from_parser(attr.name,
+                                                       DOMString::from(attr.value),
+                                                       None);
+                    }
+
+                    nodes.lock().unwrap().insert(id, JS::from_rooted(&Root::upcast(elem)));
+                }
+
+                ParserOperation::CreateComment(text, id) => {
+                    let comment = Comment::new(DOMString::from(text), &*document);
+                    nodes.lock().unwrap().insert(id, JS::from_rooted(&Root::upcast(comment)));
+                }
+
+                ParserOperation::Insert(parent, reference_child, new_node) => {
+                    let parent = &**nodes.lock().unwrap().get(&parent).unwrap();
+                    let reference_child = reference_child.map(|r| &**nodes.lock().unwrap().get(&r).unwrap());
+                    match new_node {
+                        ServoNodeOrText::Node(n) => {
+                            let n = &**nodes.lock().unwrap().get(&n).unwrap();
+                            assert!(parent.InsertBefore(&n, reference_child).is_ok());
+                        }
+                        ServoNodeOrText::Text(t) => {
+                            let text = Text::new(DOMString::from(t), &parent.owner_doc());
+                            assert!(parent.InsertBefore(text.upcast(), reference_child).is_ok());
+                        }
+                    }
+                }
+
+                ParserOperation::AppendDoctypeToDocument(name, public_id, system_id) => {
+                    let doctype = DocumentType::new(
+                        DOMString::from(name), Some(DOMString::from(public_id)),
+                        Some(DOMString::from(system_id)), document);
+                    document.upcast::<Node>().AppendChild(doctype.upcast()).expect("Appending failed");
+                }
+
+                ParserOperation::AddAttrsIfMissing(id, attrs) => {
+                    let target = &**nodes.lock().unwrap().get(&id).unwrap();
+                    let elem = target.downcast::<Element>()
+                                     .expect("tried to set attrs on non-Element in HTML parsing");
+                    for attr in attrs {
+                        elem.set_attribute_from_parser(attr.name, DOMString::from(attr.value), None);
+                    }
+                }
+
+                ParserOperation::RemoveFromParent(target) => {
+                    let target = &**nodes.lock().unwrap().get(&target).unwrap();
+                    if let Some(ref parent) = target.GetParentNode() {
+                        parent.RemoveChild(&*target).unwrap();
+                    }
+                }
+
+                ParserOperation::MarkScriptAlreadyStarted(node) => {
+                    let node = &**nodes.lock().unwrap().get(&node).unwrap();
+                    let script = node.downcast::<HTMLScriptElement>();
+                    script.map(|script| script.mark_already_started());
+                }
+
+                ParserOperation::CompleteScript(node) => {
+                    let node = &**nodes.lock().unwrap().get(&node).unwrap();
+                    let script = node.downcast::<HTMLScriptElement>();
+                    if let Some(script) = script {
+                        let _ = script.prepare();
+                    }
+                }
+
+                ParserOperation::ReparentChild(node, new_parent) => {
+                    let node = &**nodes.lock().unwrap().get(&node).unwrap();
+                    let new_parent = &**nodes.lock().unwrap().get(&new_parent).unwrap();
+                    while let Some(ref child) = node.GetFirstChild() {
+                        new_parent.AppendChild(child.r()).unwrap();
+                    }
+                }
+                ParserOperation::SetQuirksMode(mode) => {
+                    document.set_quirks_mode(mode);
+                }
+            }
+        }
     }
 
     fn collect_reports(&self, reports_chan: ReportsChan) {

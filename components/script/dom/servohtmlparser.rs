@@ -29,9 +29,9 @@ use js::jsapi::JSTracer;
 use msg::constellation_msg::{PipelineId, SubpageId};
 use net_traits::{AsyncResponseListener, Metadata, NetworkError};
 use network_listener::PreInvoke;
-use parse::html::{ParseNode, ParseNodeData, process_op, ParserOperation};
+use parse::html::{ParseNode, ParseNodeData, process_op};
 use parse::Parser;
-use parser_thread;
+use parser_thread::{ParserThread, ParserChan, ParserThreadMsg, ParserThreadChan, ParserOperation, TokenizerOperation};
 use script_runtime::ScriptChan;
 use script_thread::{MainThreadScriptMsg, ScriptThread};
 use std::cell::Cell;
@@ -46,35 +46,48 @@ use url::Url;
 use util::resource_files::read_resource_file;
 
 #[must_root]
-#[derive(JSTraceable, HeapSizeOf)]
+#[derive(JSTraceable, HeapSizeOf, Clone)]
 pub struct Sink {
     pub base_url: Option<Url>,
-    pub document: JS<Document>,
+    //pub document: JS<Document>,
+    #[ignore_heap_size_of="for Aiur"]
+    pub document: ParseNode,
+    #[ignore_heap_size_of="for Aiur"]
     pub nodes: Arc<Mutex<HashMap<usize, JS<Node>>>>,
     // FIXME: interior mutability only needed until html5ever is updated to make
     //        get_template_contents mutable.
-    pub parse_data: DOMRefCell<Arc<Mutex<HashMap<usize, ParseNodeData>>>>,
+    #[ignore_heap_size_of="for science!"]
+    pub parse_data: Arc<Mutex<DOMRefCell<HashMap<usize, ParseNodeData>>>>,
     next_parse_node_id: Cell<usize>,
     pending_parse_ops: Cell<usize>,
 }
 
 impl Sink {
-    fn new(base_url: Option<Url>, document: &Document) -> Sink {
+    // fn new(base_url: Option<Url>, document: &Document) -> Sink {
+    fn new(base_url: Option<Url>, document: ParseNode, nodes: Arc<Mutex<HashMap<usize, JS<Node>>>>) -> Sink {
         Sink {
             base_url: base_url,
-            document: JS::from_ref(document),
-            nodes: Arc::new(Mutex::new(HashMap::new())),
-            parse_data: DOMRefCell::new(Arc::new(Mutex::new(HashMap::new()))),
+            //document: JS::from_ref(document),
+            document: document,
+            // nodes: Arc::new(Mutex::new(HashMap::new())),
+            nodes: nodes,
+            parse_data: Arc::new(Mutex::new(DOMRefCell::new(HashMap::new()))),
             // 0 is reserved for the root document
             next_parse_node_id: Cell::new(1),
             pending_parse_ops: Cell::new(0),
         }
     }
 
+    pub fn get_local_document (&self, parse_node: &ParseNode) -> Document {
+        let local_document = Root::from_ref(&**self.nodes.lock().unwrap().get(&parse_node.id).unwrap());
+        let local_document = local_document.downcast::<Document>().unwrap();
+        *local_document
+    }
+
     pub fn new_parse_node(&self) -> ParseNode {
         let id = self.next_parse_node_id.get();
         let data = ParseNodeData { parent: None, qual_name: None };
-        assert!(self.parse_data.borrow_mut().insert(id, data).is_none());
+        assert!(self.parse_data.lock().unwrap().borrow_mut().insert(id, data).is_none());
         self.next_parse_node_id.set(self.next_parse_node_id.get() + 1);
         ParseNode {
             id: id,
@@ -83,13 +96,14 @@ impl Sink {
 
     pub fn enqueue(&self, op: ParserOperation) {
         self.pending_parse_ops.set(self.pending_parse_ops.get() + 1);
-        let parser = self.document.get_current_parser().unwrap();
+        // let parser = self.document.get_current_parser().unwrap();
+        let parser = self.get_local_document(&self.document).get_current_parser().unwrap();
         let parser = match parser.r() {
             ParserRef::HTML(parser) => Trusted::new(parser,
-                                                    self.document.global().r().script_chan()),
+                                                    self.get_local_document(&self.document).global().r().script_chan()),
             ParserRef::XML(_) => panic!("async XML parsing actions unsupported"),
         };
-        self.document
+        self.get_local_document(&self.document)
             .window()
             .main_thread_script_chan()
             .send(MainThreadScriptMsg::Parser(parser, op))
@@ -227,7 +241,7 @@ impl<'a> ParserRef<'a> {
 
     pub fn pending_input(&self) -> &DOMRefCell<Vec<String>> {
         match *self {
-            ParserRef::HTML(parser) => parser.pending_input(),
+            ParserRef::HTML(parser) => ParserThread::pending_input(),
             ParserRef::XML(parser) => parser.pending_input(),
         }
     }
@@ -416,12 +430,19 @@ pub struct ServoHTMLParser {
     /// correspond to a page load.
     pipeline: Option<PipelineId>,
     finished: Cell<bool>,
-    #[derive(HeapSizeOf)]
+    // #[derive(HeapSizeOf)]
+    #[ignore_heap_size_of="for now"]
     nodes: Arc<Mutex<HashMap<usize, JS<Node>>>>,
-    #[derive(HeapSizeOf)]
+    // #[derive(HeapSizeOf)]
+    #[ignore_heap_size_of="for now"]
+    #[derive (Clone)]
     parse_data: Arc<Mutex<DOMRefCell<HashMap<usize, ParseNodeData>>>>,
-    #[ignore_heap_size_of = "Defined in html5ever"]
-    parse_sender: Sender<ParserMsg>,
+    // #[ignore_heap_size_of = "Defined in html5ever"]
+    // parse_sender: Sender<TokenizerOperation>,
+    #[ignore_heap_size_of="xxx"]
+    chan_: ParserThreadChan,
+    // #[ignore_heap_size_of="for now"]
+    // tokenizer: DOMRefCell<Tokenizer>,
 }
 
 impl<'a> Parser for &'a ServoHTMLParser {
@@ -437,8 +458,8 @@ impl<'a> Parser for &'a ServoHTMLParser {
         assert!(!self.suspended.get());
         assert!(self.pending_input.borrow().is_empty());
         self.finished.set(true);
-
-        self.tokenizer.borrow_mut().end();
+        self.chan_.send(TokenizerOperation::End);
+        //self.tokenizer.borrow_mut().end();
         debug!("finished parsing");
     }
 }
@@ -446,39 +467,36 @@ impl<'a> Parser for &'a ServoHTMLParser {
 impl ServoHTMLParser {
     #[allow(unrooted_must_root)]
     pub fn new(base_url: Option<Url>, document: &Document, pipeline: Option<PipelineId>)
+    // pub fn new(base_url: Option<Url>, document: &ParseNode, pipeline: Option<PipelineId>)
                -> Root<ServoHTMLParser> {
+            let (parser_chan, parser_port) = channel();
+            let chan = ParserThreadChan(parser_chan.clone());
+            let parser = ServoHTMLParser {
+                reflector_: Reflector::new(),
+                // tokenizer: DOMRefCell::new(Tokenizer::new()),
+                pending_input: DOMRefCell::new(vec!()),
+                document: JS::from_ref(document),
+                suspended: Cell::new(false),
+                last_chunk_received: Cell::new(false),
+                pipeline: pipeline,
+                finished: Cell::new(false),
+                nodes: Arc::new(Mutex::new(HashMap::new())),
+                parse_data: Arc::new(Mutex::new(DOMRefCell::new(HashMap::new()))),
+                chan_: ParserThreadChan(parser_chan.clone()),
+            };
+            let trusted_document = Trusted::new(document, ScriptThread::script_chan.clone());
+            let chan_thread = document.window.main_thread_script_chan().clone();
+            parser.nodes.lock().unwrap().insert(0, JS::from_ref(document.upcast()));
+            parser.parse_data.lock().unwrap().borrow_mut().insert(0, ParseNodeData { qual_name: None, parent: None });
+            let mut sink = Sink::new(base_url, document, parser.nodes);
+            // sink.nodes.lock().unwrap().insert(0, JS::from_ref(document.upcast()));
+            // sink.parse_data.lock().unwrap().borrow_mut().insert(0, ParseNodeData { qual_name: None, parent: None });
 
             // here we create our parser thread
-            parser_thread = ParserThread::new(base_url, document, pipeline);
+            let parser_thread = ParserThread::new(base_url, trusted_document, pipeline, sink.clone(), chan, chan_thread);
 
-            // let mut sink = Sink::new(base_url, document);
-            //
-            // // here hashmaps should be already in Arc<Mutex<>> ?
-            // sink.nodes.insert(0, JS::from_ref(document.upcast()));
-            // sink.parse_data.borrow_mut().insert(0, ParseNodeData { qual_name: None, parent: None });
-            //
-            // let tb = TreeBuilder::new(sink, TreeBuilderOpts {
-            //     ignore_missing_rules: true,
-            //     .. Default::default()
-            // });
-            //
-            // let tok = tokenizer::Tokenizer::new(tb, Default::default());
-            //
-            // let parser = ServoHTMLParser {
-            //     reflector_: Reflector::new(),
-            //     tokenizer: DOMRefCell::new(tok),
-            //     pending_input: DOMRefCell::new(vec!()),
-            //     document: JS::from_ref(document),
-            //     suspended: Cell::new(false),
-            //     last_chunk_received: Cell::new(false),
-            //     pipeline: pipeline,
-            //     finished: Cell::new(false),
-            //     nodes: sink.nodes,
-            //     parse_data: sink.parse_data,
-            // };
-            //
-            // reflect_dom_object(box parser, GlobalRef::Window(document.window()),
-            //                    ServoHTMLParserBinding::Wrap)
+            reflect_dom_object(box parser, GlobalRef::Window(document.window()),
+                               ServoHTMLParserBinding::Wrap)
     }
 
     #[allow(unrooted_must_root)]
@@ -517,16 +535,18 @@ impl ServoHTMLParser {
     }
 
     pub fn set_plaintext_state(&self) {
-        self.tokenizer.borrow_mut().set_plaintext_state()
+        // self.tokenizer.borrow_mut().set_plaintext_state()
+        self.chan_.send(TokenizerOperation::SetPlaintextState);
     }
 
     pub fn end_tokenizer(&self) {
-        self.tokenizer.borrow_mut().end()
+        self.chan_.send(TokenizerOperation::End);
+        //self.tokenizer.borrow_mut().end()
     }
 
 
     pub fn invoke(&self, op: ParserOperation) {
-        let mut tokenizer = self.tokenizer.borrow_mut();
+        let mut tokenizer = ParserThread::tokenizer(&self).borrow_mut();
         let sink = tokenizer.sink_mut().sink_mut();
         process_op(&mut sink.nodes, op);
         sink.pending_parse_ops.set(sink.pending_parse_ops.get() - 1);
@@ -550,9 +570,11 @@ impl ServoHTMLParser {
             let mut pending_input = self.pending_input.borrow_mut();
             if !pending_input.is_empty() {
                 let chunk = pending_input.remove(0);
-                self.tokenizer.borrow_mut().feed(chunk.into());
+                self.chan_.send(TokenizerOperation::Feed(chunk.into()));
+                //self.tokenizer.borrow_mut().feed(chunk.into());
             } else {
-                self.tokenizer.borrow_mut().run();
+                self.chan_.send(TokenizerOperation::Run);
+                //self.tokenizer.borrow_mut().run();
             }
 
             // Document parsing is blocked on an external resource.

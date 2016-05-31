@@ -140,7 +140,7 @@ enum ParserBlockedByScript {
 #[dom_struct]
 pub struct Document {
     node: Node,
-    window: JS<Window>,
+    pub window: JS<Window>,
     /// https://html.spec.whatwg.org/multipage/#concept-document-bc
     browsing_context: Option<JS<BrowsingContext>>,
     implementation: MutNullableHeap<JS<DOMImplementation>>,

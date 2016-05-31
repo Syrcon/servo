@@ -95,6 +95,8 @@ mod network_listener;
 pub mod origin;
 pub mod page;
 pub mod parse;
+#[macro_use]
+pub mod parser_thread;
 pub mod reporter;
 pub mod script_runtime;
 #[allow(unsafe_code)]
